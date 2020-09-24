@@ -1,3 +1,6 @@
+.__afs*
+*.swp
+*.swo
 *.pyc
 *.idea
 *.DS_Store
