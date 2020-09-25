@@ -2,6 +2,7 @@ from typing import List, Tuple, Union
 
 from rdkit import Chem
 import torch
+import numpy as np
 
 # Atom feature sizes
 MAX_ATOMIC_NUM = 100
@@ -28,33 +29,41 @@ THREE_D_DISTANCE_BINS = list(range(0, THREE_D_DISTANCE_MAX + 1, THREE_D_DISTANCE
 
 # len(choices) + 1 to include room for uncommon values; + 2 at end for IsAromatic and mass
 ATOM_FDIM = sum(len(choices) + 1 for choices in ATOM_FEATURES.values()) + 2
+EXTRA_ATOM_FDIM = 0
 BOND_FDIM = 14
 
 
 def get_atom_fdim() -> int:
-    """Gets the dimensionality of atom features."""
-    return ATOM_FDIM
+    """Gets the dimensionality of the atom feature vector."""
+    return ATOM_FDIM + EXTRA_ATOM_FDIM
+
+
+def set_extra_atom_fdim(extra) -> int:
+    """Change the dimensionality of the atom feature vector."""
+    global EXTRA_ATOM_FDIM
+    EXTRA_ATOM_FDIM = extra
 
 
 def get_bond_fdim(atom_messages: bool = False) -> int:
     """
-    Gets the dimensionality of bond features.
+    Gets the dimensionality of the bond feature vector.
 
-    :param atom_messages whether atom messages are being used. If atom messages, only contains bond features.
-    Otherwise contains both atom and bond features.
-    :return: The dimensionality of bond features.
+    :param atom_messages: Whether atom messages are being used. If atom messages are used,
+                          then the bond feature vector only contains bond features.
+                          Otherwise it contains both atom and bond features.
+    :return: The dimensionality of the bond feature vector.
     """
     return BOND_FDIM + (not atom_messages) * get_atom_fdim()
 
 
 def onek_encoding_unk(value: int, choices: List[int]) -> List[int]:
     """
-    Creates a one-hot encoding.
+    Creates a one-hot encoding with an extra category for uncommon values.
 
     :param value: The value for which the encoding should be one.
     :param choices: A list of possible values.
-    :return: A one-hot encoding of the value in a list of length len(choices) + 1.
-    If value is not in the list of choices, then the final element in the encoding is 1.
+    :return: A one-hot encoding of the :code:`value` in a list of length :code:`len(choices) + 1`.
+             If :code:`value` is not in :code:`choices`, then the final element in the encoding is 1.
     """
     encoding = [0] * (len(choices) + 1)
     index = choices.index(value) if value in choices else -1
@@ -88,7 +97,7 @@ def bond_features(bond: Chem.rdchem.Bond) -> List[Union[bool, int, float]]:
     """
     Builds a feature vector for a bond.
 
-    :param bond: A RDKit bond.
+    :param bond: An RDKit bond.
     :return: A list containing the bond features.
     """
     if bond is None:
@@ -110,26 +119,27 @@ def bond_features(bond: Chem.rdchem.Bond) -> List[Union[bool, int, float]]:
 
 class MolGraph:
     """
-    A MolGraph represents the graph structure and featurization of a single molecule.
+    A :class:`MolGraph` represents the graph structure and featurization of a single molecule.
 
     A MolGraph computes the following attributes:
-    - n_atoms: The number of atoms in the molecule.
-    - n_bonds: The number of bonds in the molecule.
-    - f_atoms: A mapping from an atom index to a list atom features.
-    - f_bonds: A mapping from a bond index to a list of bond features.
-    - a2b: A mapping from an atom index to a list of incoming bond indices.
-    - b2a: A mapping from a bond index to the index of the atom the bond originates from.
-    - b2revb: A mapping from a bond index to the index of the reverse bond.
+
+    * :code:`n_atoms`: The number of atoms in the molecule.
+    * :code:`n_bonds`: The number of bonds in the molecule.
+    * :code:`f_atoms`: A mapping from an atom index to a list of atom features.
+    * :code:`f_bonds`: A mapping from a bond index to a list of bond features.
+    * :code:`a2b`: A mapping from an atom index to a list of incoming bond indices.
+    * :code:`b2a`: A mapping from a bond index to the index of the atom the bond originates from.
+    * :code:`b2revb`: A mapping from a bond index to the index of the reverse bond.
     """
 
-    def __init__(self, mol: Union[str, Chem.Mol], include_nodes: List[int] = None):
+    def __init__(self, mol: Union[str, Chem.Mol], atom_descriptors: np.ndarray, include_nodes: List[int] = None):
         """
         Computes the graph structure and featurization of a molecule.
 
         :param mol: A SMILES string or an RDKit molecule.
         :param include_nodes: MolGraph will only contain nodes and edges of the subgraph induced
                               by the node indices in include_nodes. If None, uses full graph.
-        """
+       """
         # Convert SMILES to RDKit molecule if necessary
         if type(mol) == str:
             mol = Chem.MolFromSmiles(mol)
@@ -152,6 +162,11 @@ class MolGraph:
             if i in include_nodes:
                 node_to_atom[len(self.f_atoms)] = i
                 self.f_atoms.append(atom_features(atom))
+
+        # TODO: fix with include nodes
+        if atom_descriptors is not None:
+            self.f_atoms = [f_atoms + descs.tolist() for f_atoms, descs in zip(self.f_atoms, atom_descriptors)]
+
         self.n_atoms = len(self.f_atoms)
 
         # Initialize atom to bond mapping for each atom
@@ -184,23 +199,26 @@ class MolGraph:
 
 class BatchMolGraph:
     """
-    A BatchMolGraph represents the graph structure and featurization of a batch of molecules.
+    A :class:`BatchMolGraph` represents the graph structure and featurization of a batch of molecules.
 
-    A BatchMolGraph contains the attributes of a MolGraph plus:
-    - subgraph_scope: When using knowledge graphs, this is a mapping from molecule index to subgraph indices
-                      in the BatchMolGraph in order to reconstruct each molecule from its subgraphs.
-    - atom_fdim: The dimensionality of the atom features.
-    - bond_fdim: The dimensionality of the bond features (technically the combined atom/bond features).
-    - a_scope: A list of tuples indicating the start and end atom indices for each molecule.
-    - b_scope: A list of tuples indicating the start and end bond indices for each molecule.
-    - max_num_bonds: The maximum number of bonds neighboring an atom in this batch.
-    - b2b: (Optional) A mapping from a bond index to incoming bond indices.
-    - a2a: (Optional): A mapping from an atom index to neighboring atom indices.
+    A BatchMolGraph contains the attributes of a :class:`MolGraph` plus:
+    
+    * :code:`subgraph_scope`: When using knowledge graphs, this is a mapping from molecule index to subgraph indices
+                              in the BatchMolGraph in order to reconstruct each molecule from its subgraphs.
+    * :code:`atom_fdim`: The dimensionality of the atom feature vector.
+    * :code:`bond_fdim`: The dimensionality of the bond feature vector (technically the combined atom/bond features).
+    * :code:`a_scope`: A list of tuples indicating the start and end atom indices for each molecule.
+    * :code:`b_scope`: A list of tuples indicating the start and end bond indices for each molecule.
+    * :code:`max_num_bonds`: The maximum number of bonds neighboring an atom in this batch.
+    * :code:`b2b`: (Optional) A mapping from a bond index to incoming bond indices.
+    * :code:`a2a`: (Optional): A mapping from an atom index to neighboring atom indices.
     """
 
     def __init__(self, mol_graphs: List[MolGraph], subgraph_scope: List[List[int]] = None):
+        r"""
+        :param mol_graphs: A list of :class:`MolGraph`\ s from which to construct the :class:`BatchMolGraph`.
+        """
         self.subgraph_scope = subgraph_scope
-
         self.atom_fdim = get_atom_fdim()
         self.bond_fdim = get_bond_fdim()
 
@@ -246,12 +264,22 @@ class BatchMolGraph:
                                                                    torch.LongTensor, torch.LongTensor, torch.LongTensor,
                                                                    List[Tuple[int, int]], List[Tuple[int, int]]]:
         """
-        Returns the components of the BatchMolGraph.
+        Returns the components of the :class:`BatchMolGraph`.
 
-        :param atom_messages: Whether to use atom messages instead of bond messages. This changes the bond features
-        to contain only bond features rather than a concatenation of atom and bond features.
-        :return: A tuple containing PyTorch tensors with the atom features, bond features, and graph structure
-        and two lists indicating the scope of the atoms and bonds (i.e. which molecules they belong to).
+        The returned components are, in order:
+
+        * :code:`f_atoms`
+        * :code:`f_bonds`
+        * :code:`a2b`
+        * :code:`b2a`
+        * :code:`b2revb`
+        * :code:`a_scope`
+        * :code:`b_scope`
+
+        :param atom_messages: Whether to use atom messages instead of bond messages. This changes the bond feature
+                              vector to contain only bond features rather than both atom and bond features.
+        :return: A tuple containing PyTorch tensors with the atom features, bond features, graph structure,
+                 and scope of the atoms and bonds (i.e., the indices of the molecules they belong to).
         """
         if atom_messages:
             f_bonds = self.f_bonds[:, :get_bond_fdim(atom_messages=atom_messages)]
@@ -266,7 +294,6 @@ class BatchMolGraph:
 
         :return: A PyTorch tensor containing the mapping from each bond index to all the incoming bond indices.
         """
-
         if self.b2b is None:
             b2b = self.a2b[self.b2a]  # num_bonds x max_num_bonds
             # b2b includes reverse edge for each bond so need to mask out
@@ -279,7 +306,7 @@ class BatchMolGraph:
         """
         Computes (if necessary) and returns a mapping from each atom index to all neighboring atom indices.
 
-        :return: A PyTorch tensor containing the mapping from each bond index to all the incodming bond indices.
+        :return: A PyTorch tensor containing the mapping from each bond index to all the incoming bond indices.
         """
         if self.a2a is None:
             # b = a1 --> a2
@@ -352,11 +379,15 @@ class BatchMolGraph:
         self.a2a = None
 
 
-def mol2graph(mols: Union[List[str], List[Chem.Mol]]) -> BatchMolGraph:
+def mol2graph(mols: Union[List[str], List[Chem.Mol]], atom_descriptors_batch: List[np.array] = None) -> BatchMolGraph:
     """
-    Converts a list of SMILES strings or RDKit molecules to a BatchMolGraph containing the batch of molecular graphs.
+    Converts a list of SMILES or RDKit molecules to a :class:`BatchMolGraph` containing the batch of molecular graphs.
 
-    :param mols: A list of SMILES strings or a list of RDKit molecules.
-    :return: A BatchMolGraph containing the combined molecular graph for the molecules
+    :param mols: A list of SMILES or a list of RDKit molecules.
+    :param atom_descriptors_batch: A list of 2D numpy array containing additional atom descriptors to featurize the molecule
+    :return: A :class:`BatchMolGraph` containing the combined molecular graph for the molecules.
     """
-    return BatchMolGraph([MolGraph(mol) for mol in mols])
+    if atom_descriptors_batch is not None:
+        return BatchMolGraph([MolGraph(mol, atom_descriptors) for mol, atom_descriptors in zip(mols, atom_descriptors_batch)])
+    else:
+        return BatchMolGraph([MolGraph(mol) for mol in mols])

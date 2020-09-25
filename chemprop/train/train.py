@@ -10,10 +10,11 @@ from tqdm import tqdm
 
 from chemprop.args import TrainArgs
 from chemprop.data import MoleculeDataLoader, MoleculeDataset
+from chemprop.models import MoleculeModel
 from chemprop.nn_utils import compute_gnorm, compute_pnorm, NoamLR
 
 
-def train(model: nn.Module,
+def train(model: MoleculeModel,
           data_loader: MoleculeDataLoader,
           loss_func: Callable,
           optimizer: Optimizer,
@@ -25,32 +26,33 @@ def train(model: nn.Module,
     """
     Trains a model for an epoch.
 
-    :param model: Model.
-    :param data_loader: A MoleculeDataLoader.
+    :param model: A :class:`~chemprop.models.model.MoleculeModel`.
+    :param data_loader: A :class:`~chemprop.data.data.MoleculeDataLoader`.
     :param loss_func: Loss function.
-    :param optimizer: An Optimizer.
+    :param optimizer: An optimizer.
     :param scheduler: A learning rate scheduler.
-    :param args: Arguments.
+    :param args: A :class:`~chemprop.args.TrainArgs` object containing arguments for training the model.
     :param n_iter: The number of iterations (training examples) trained on so far.
-    :param logger: A logger for printing intermediate results.
+    :param logger: A logger for recording output.
     :param writer: A tensorboardX SummaryWriter.
     :return: The total number of iterations (training examples) trained on so far.
     """
     debug = logger.debug if logger is not None else print
     
     model.train()
-    loss_sum, iter_count = 0, 0
+    loss_sum = iter_count = 0
 
-    for batch in tqdm(data_loader, total=len(data_loader)):
+    for batch in tqdm(data_loader, total=len(data_loader), leave=False):
         # Prepare batch
         batch: MoleculeDataset
-        mol_batch, features_batch, target_batch = batch.batch_graph(), batch.features(), batch.targets()
+        mol_batch, features_batch, target_batch, atom_descriptors_batch = \
+            batch.batch_graph(), batch.features(), batch.targets(), batch.atom_descriptors()
         mask = torch.Tensor([[x is not None for x in tb] for tb in target_batch])
         targets = torch.Tensor([[0 if x is None else x for x in tb] for tb in target_batch])
 
         # Run model
         model.zero_grad()
-        preds = model(mol_batch, features_batch)
+        preds = model(mol_batch, features_batch, atom_descriptors_batch)
 
         # Move tensors to correct device
         mask = mask.to(preds.device)
@@ -65,9 +67,11 @@ def train(model: nn.Module,
         loss = loss.sum() / mask.sum()
 
         loss_sum += loss.item()
-        iter_count += len(batch)
+        iter_count += 1
 
         loss.backward()
+        if args.grad_clip:
+            nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
         optimizer.step()
 
         if isinstance(scheduler, NoamLR):
@@ -81,7 +85,7 @@ def train(model: nn.Module,
             pnorm = compute_pnorm(model)
             gnorm = compute_gnorm(model)
             loss_avg = loss_sum / iter_count
-            loss_sum, iter_count = 0, 0
+            loss_sum = iter_count = 0
 
             lrs_str = ', '.join(f'lr_{i} = {lr:.4e}' for i, lr in enumerate(lrs))
             debug(f'Loss = {loss_avg:.4e}, PNorm = {pnorm:.4f}, GNorm = {gnorm:.4f}, {lrs_str}')

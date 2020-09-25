@@ -1,6 +1,6 @@
+from typing import List, Union
+from rdkit import Chem
 from copy import deepcopy
-from typing import List
-
 import numpy as np
 import torch
 import torch.nn as nn
@@ -12,28 +12,19 @@ from chemprop.nn_utils import get_activation_function, initialize_weights
 
 
 class MoleculeModel(nn.Module):
-    """A MoleculeModel is a model which contains a message passing network following by feed-forward layers."""
+    """A :class:`MoleculeModel` is a model which contains a message passing network following by feed-forward layers."""
 
-    def __init__(self,
-                 args: TrainArgs,
-                 atom_fdim: int = None,
-                 bond_fdim: int = None,
-                 featurizer: bool = False):
+    def __init__(self, args: TrainArgs, featurizer: bool = False):
         """
-        Initializes the MoleculeModel.
-
-        :param args: Arguments.
-        :param atom_fdim: Atom features dimension.
-        :param bond_fdim: Bond features dimension.
-        :param featurizer: Whether the model should act as a featurizer, i.e. outputting
-                           learned features in the final layer before prediction.
+        :param args: A :class:`~chemprop.args.TrainArgs` object containing model arguments.
+        :param featurizer: Whether the model should act as a featurizer, i.e., outputting the
+                           learned features from the last layer prior to prediction rather than
+                           outputting the actual property predictions.
         """
         super(MoleculeModel, self).__init__()
 
         self.classification = args.dataset_type == 'classification'
         self.multiclass = args.dataset_type == 'multiclass'
-        self.atom_fdim = atom_fdim
-        self.bond_fdim = bond_fdim
         self.featurizer = featurizer
 
         self.output_size = args.num_tasks
@@ -51,19 +42,19 @@ class MoleculeModel(nn.Module):
 
         initialize_weights(self)
 
-    def create_encoder(self, args: TrainArgs):
+    def create_encoder(self, args: TrainArgs) -> None:
         """
         Creates the message passing encoder for the model.
 
-        :param args: Arguments.
+        :param args: A :class:`~chemprop.args.TrainArgs` object containing model arguments.
         """
         self.encoder = MPN(args, atom_fdim=self.atom_fdim, bond_fdim=self.bond_fdim)
 
-    def create_ffn(self, args: TrainArgs):
+    def create_ffn(self, args: TrainArgs) -> None:
         """
-        Creates the feed-forward network for the model.
+        Creates the feed-forward layers for the model.
 
-        :param args: Arguments.
+        :param args: A :class:`~chemprop.args.TrainArgs` object containing model arguments.
         """
         self.multiclass = args.dataset_type == 'multiclass'
         if self.multiclass:
@@ -74,6 +65,9 @@ class MoleculeModel(nn.Module):
             first_linear_dim = args.hidden_size
             if args.use_input_features:
                 first_linear_dim += args.features_size
+
+        if args.atom_descriptors == 'descriptor':
+            first_linear_dim += args.atom_descriptors_size
 
         dropout = nn.Dropout(args.dropout)
         activation = get_activation_function(args.activation)
@@ -104,26 +98,39 @@ class MoleculeModel(nn.Module):
         # Create FFN model
         self.ffn = nn.Sequential(*ffn)
 
-    def featurize(self, *input) -> torch.FloatTensor:
+    def featurize(self,
+                  batch: Union[List[str], List[Chem.Mol], BatchMolGraph],
+                  features_batch: List[np.ndarray] = None,
+                  atom_descriptors_batch: List[np.ndarray] = None) -> torch.FloatTensor:
         """
-        Computes feature vectors of the input by leaving out the last layer.
-        :param input: Input.
-        :return: The feature vectors computed by the MoleculeModel.
-        """
-        return self.ffn[:-1](self.encoder(*input))
+        Computes feature vectors of the input by running the model except for the last layer.
 
-    def forward(self, *input) -> torch.FloatTensor:
+        :param batch: A list of SMILES, a list of RDKit molecules, or a
+                      :class:`~chemprop.features.featurization.BatchMolGraph`.
+        :param features_batch: A list of numpy arrays containing additional features.
+        :param atom_descriptors_batch: A list of numpy arrays containing additional atom descriptors.
+        :return: The feature vectors computed by the :class:`MoleculeModel`.
         """
-        Runs the MoleculeModel on input.
+        Computes feature vectors of the input by running the model except for the last layer.
 
-        :param input: Molecular input.
-        :return: The output of the MoleculeModel. Either property predictions
-                 or molecule features if self.featurizer is True.
+    def forward(self,
+                batch: Union[List[str], List[Chem.Mol], BatchMolGraph],
+                features_batch: List[np.ndarray] = None,
+                atom_descriptors_batch: List[np.ndarray] = None) -> torch.FloatTensor:
+        """
+        Runs the :class:`MoleculeModel` on input.
+
+        :param batch: A list of SMILES, a list of RDKit molecules, or a
+                      :class:`~chemprop.features.featurization.BatchMolGraph`.
+        :param features_batch: A list of numpy arrays containing additional features.
+        :param atom_descriptors_batch: A list of numpy arrays containing additional atom descriptors.
+        :return: The output of the :class:`MoleculeModel`, which is either property predictions
+                 or molecule features if :code:`self.featurizer=True`.
         """
         if self.featurizer:
-            return self.featurize(*input)
+            return self.featurize(batch, features_batch, atom_descriptors_batch)
 
-        output = self.ffn(self.encoder(*input))
+        output = self.ffn(self.encoder(batch, features_batch, atom_descriptors_batch))
 
         # Don't apply sigmoid during training b/c using BCEWithLogitsLoss
         if self.classification and not self.training:
