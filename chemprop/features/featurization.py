@@ -161,11 +161,13 @@ class MolGraph:
         for i, atom in enumerate(mol.GetAtoms()):
             if i in include_nodes:
                 node_to_atom[len(self.f_atoms)] = i
-                self.f_atoms.append(atom_features(atom))
+                f_atom = atom_features(atom)
+                
+                if atom_descriptors is not None:
+                    f_atom.extend(descs[i].tolist())
 
-        # TODO: fix with include nodes
-        if atom_descriptors is not None:
-            self.f_atoms = [f_atoms + descs.tolist() for f_atoms, descs in zip(self.f_atoms, atom_descriptors)]
+                self.f_atoms.append(f_atom)
+                
 
         self.n_atoms = len(self.f_atoms)
 
