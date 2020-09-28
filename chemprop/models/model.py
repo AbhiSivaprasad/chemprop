@@ -14,7 +14,7 @@ from chemprop.nn_utils import get_activation_function, initialize_weights
 class MoleculeModel(nn.Module):
     """A :class:`MoleculeModel` is a model which contains a message passing network following by feed-forward layers."""
 
-    def __init__(self, args: TrainArgs, featurizer: bool = False):
+    def __init__(self, args: TrainArgs, atom_fdim = None, bond_fdim = None, featurizer: bool = False):
         """
         :param args: A :class:`~chemprop.args.TrainArgs` object containing model arguments.
         :param featurizer: Whether the model should act as a featurizer, i.e., outputting the
@@ -37,18 +37,18 @@ class MoleculeModel(nn.Module):
         if self.multiclass:
             self.multiclass_softmax = nn.Softmax(dim=2)
 
-        self.create_encoder(args)
+        self.create_encoder(args, atom_fdim, bond_fdim)
         self.create_ffn(args)
 
         initialize_weights(self)
 
-    def create_encoder(self, args: TrainArgs) -> None:
+    def create_encoder(self, args: TrainArgs, atom_fdim = None, bond_fdim = None) -> None:
         """
         Creates the message passing encoder for the model.
 
         :param args: A :class:`~chemprop.args.TrainArgs` object containing model arguments.
         """
-        self.encoder = MPN(args)        
+        self.encoder = MPN(args, atom_fdim, bond_fdim)        
 
     def create_ffn(self, args: TrainArgs) -> None:
         """
@@ -149,7 +149,10 @@ class KGModel(nn.Module):
         self.subgraph_model = MoleculeModel(args, featurizer=True)
         graph_args = deepcopy(args)
         graph_args.depth = 0
-        self.graph_model = MoleculeModel(args)
+
+        # pass in atom fdim and bond fdim to MPN
+        args.atom_messages = True
+        self.graph_model = MoleculeModel(args, atom_fdim=200, bond_fdim=1)
 
     def forward(self,
                 batch_mol_graph: BatchMolGraph,
