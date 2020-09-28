@@ -48,7 +48,7 @@ class MoleculeModel(nn.Module):
 
         :param args: A :class:`~chemprop.args.TrainArgs` object containing model arguments.
         """
-        self.encoder = MPN(args, atom_fdim=self.atom_fdim, bond_fdim=self.bond_fdim)
+        self.encoder = MPN(args)        
 
     def create_ffn(self, args: TrainArgs) -> None:
         """
@@ -111,7 +111,7 @@ class MoleculeModel(nn.Module):
         :param atom_descriptors_batch: A list of numpy arrays containing additional atom descriptors.
         :return: The feature vectors computed by the :class:`MoleculeModel`.
         """
-        Computes feature vectors of the input by running the model except for the last layer.
+        return self.ffn[:-1](self.encoder(batch, features_batch, atom_descriptors_batch))
 
     def forward(self,
                 batch: Union[List[str], List[Chem.Mol], BatchMolGraph],
@@ -149,12 +149,14 @@ class KGModel(nn.Module):
         self.subgraph_model = MoleculeModel(args, featurizer=True)
         graph_args = deepcopy(args)
         graph_args.depth = 0
-        self.graph_model = MoleculeModel(args, atom_fdim=args.hidden_size, bond_fdim=1)
+        self.graph_model = MoleculeModel(args)
 
     def forward(self,
                 batch_mol_graph: BatchMolGraph,
-                features_batch: List[np.ndarray] = None) -> torch.FloatTensor:
+                features_batch: List[np.ndarray] = None,
+                atom_descriptors_batch: List[np.ndarray] = None) -> torch.FloatTensor:
         assert features_batch is None
+        assert atom_descriptors_batch is None
 
         # Encode subgraphs
         subgraph_encodings = self.subgraph_model(batch_mol_graph)

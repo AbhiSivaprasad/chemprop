@@ -212,12 +212,6 @@ class MoleculeDataset(Dataset):
         return self._batch_graph
 
     def features(self) -> List[np.ndarray]:
-
-            self._batch_graph = BatchMolGraph(mol_graphs, subgraph_scope=subgraph_scope)
-
-        return self._batch_graph
-
-    def features(self) -> List[np.ndarray]:
         """
         Returns the features associated with each molecule (if they exist).
 
@@ -427,22 +421,6 @@ class MoleculeSampler(Sampler):
         return self.length
 
 
-def construct_molecule_batch(data: List[MoleculeDatapoint]) -> MoleculeDataset:
-    r"""
-    Constructs a :class:`MoleculeDataset` from a list of :class:`MoleculeDatapoint`\ s.
-
-    Additionally, precomputes the :class:`~chemprop.features.BatchMolGraph` for the constructed
-    :class:`MoleculeDataset`.
-
-    :param data: A list of :class:`MoleculeDatapoint`\ s.
-    :return: A :class:`MoleculeDataset` containing all the :class:`MoleculeDatapoint`\ s.
-    """
-    data = MoleculeDataset(data)
-    data.batch_graph()  # Forces computation and caching of the BatchMolGraph for the molecules
-
-    return data
-
-
 class MoleculeDataLoader(DataLoader):
     """A :class:`MoleculeDataLoader` is a PyTorch :class:`DataLoader` for loading a :class:`MoleculeDataset`."""
 
@@ -474,6 +452,7 @@ class MoleculeDataLoader(DataLoader):
         self._seed = seed
         self._context = None
         self._timeout = 0
+        self._args = args
         is_main_thread = threading.current_thread() is threading.main_thread()
         if not is_main_thread and self._num_workers > 0:
             self._context = 'forkserver'  # In order to prevent a hanging
@@ -485,6 +464,21 @@ class MoleculeDataLoader(DataLoader):
             shuffle=self._shuffle,
             seed=self._seed
         )
+
+        def construct_molecule_batch(data: List[MoleculeDatapoint]) -> MoleculeDataset:
+            r"""
+            Constructs a :class:`MoleculeDataset` from a list of :class:`MoleculeDatapoint`\ s.
+
+            Additionally, precomputes the :class:`~chemprop.features.BatchMolGraph` for the constructed
+            :class:`MoleculeDataset`.
+
+            :param data: A list of :class:`MoleculeDatapoint`\ s.
+            :return: A :class:`MoleculeDataset` containing all the :class:`MoleculeDatapoint`\ s.
+            """
+            data = MoleculeDataset(data)
+            data.batch_graph(self._args)  # Forces computation and caching of the BatchMolGraph for the molecules
+
+            return data
 
         super(MoleculeDataLoader, self).__init__(
             dataset=self._dataset,

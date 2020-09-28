@@ -8,7 +8,7 @@ from typing_extensions import Literal
 import torch
 from tap import Tap  # pip install typed-argument-parser (https://github.com/swansonk14/typed-argument-parser)
 
-from chemprop.data import set_cache_mol
+import chemprop.data
 from chemprop.features import get_available_features_generators
 
 
@@ -168,7 +168,7 @@ class CommonArgs(Tap):
         if self.atom_descriptors is not None and self.atom_descriptors_path is None:
             raise ValueError('When using atom_descriptors, --atom_descriptors_path must be specified')
 
-        set_cache_mol(not self.no_cache_mol)
+        chemprop.data.set_cache_mol(not self.no_cache_mol)
 
 
 class TrainArgs(CommonArgs):

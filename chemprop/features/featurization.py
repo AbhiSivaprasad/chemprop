@@ -132,7 +132,7 @@ class MolGraph:
     * :code:`b2revb`: A mapping from a bond index to the index of the reverse bond.
     """
 
-    def __init__(self, mol: Union[str, Chem.Mol], atom_descriptors: np.ndarray, include_nodes: List[int] = None):
+    def __init__(self, mol: Union[str, Chem.Mol], atom_descriptors: np.ndarray = None, include_nodes: List[int] = None):
         """
         Computes the graph structure and featurization of a molecule.
 
