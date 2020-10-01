@@ -50,8 +50,6 @@ class MPNEncoder(nn.Module):
         # Input
         input_dim = self.atom_fdim if self.atom_messages else self.bond_fdim
 
-        print(input_dim)
-        print(self.hidden_size)
         self.W_i = nn.Linear(input_dim, self.hidden_size, bias=self.bias)
 
         if self.atom_messages:
@@ -100,8 +98,6 @@ class MPNEncoder(nn.Module):
             a2a = mol_graph.get_a2a().to(self.device)
 
         # Input
-        #print(f_atoms.shape)
-        #print(f_bonds.shape)
         if self.atom_messages:
             input = self.W_i(f_atoms)  # num_atoms x hidden_size
         else:

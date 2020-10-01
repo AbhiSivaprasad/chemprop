@@ -68,7 +68,7 @@ def train(model: MoleculeModel,
 
         loss_sum += loss.item()
         iter_count += 1
-
+        #print(f"loss: {loss.item()}")
         loss.backward()
         if args.grad_clip:
             nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)

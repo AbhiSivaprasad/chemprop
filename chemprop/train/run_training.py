@@ -125,12 +125,14 @@ def run_training(args: TrainArgs,
     val_data_loader = MoleculeDataLoader(
         dataset=val_data,
         batch_size=args.batch_size,
-        num_workers=num_workers
+        num_workers=num_workers,
+        args=args
     )
     test_data_loader = MoleculeDataLoader(
         dataset=test_data,
         batch_size=args.batch_size,
-        num_workers=num_workers
+        num_workers=num_workers,
+        args=args
     )
 
     if args.class_balance:
@@ -158,6 +160,8 @@ def run_training(args: TrainArgs,
         debug(f'Number of parameters = {param_count(model):,}')
         if args.cuda:
             debug('Moving model to cuda')
+        else:
+            print('NO CUDA')
         model = model.to(args.device)
 
         # Ensure that model is saved in correct location for evaluation if 0 epochs

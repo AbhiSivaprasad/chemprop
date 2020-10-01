@@ -67,7 +67,7 @@ def cross_validate(args: TrainArgs,
         logger=logger,
         skip_none_targets=True
     )
-    validate_dataset_type(data, dataset_type=args.dataset_type)
+    validate_dataset_type(data, dataset_type=args.dataset_type) # validate classification/regression
     args.features_size = data.features_size()
 
     if args.atom_descriptors == 'descriptor':

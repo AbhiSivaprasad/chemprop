@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 
 from .mpn import MPN
+from .deepset import DeepSetInvariantModel, Phi, Rho
 from chemprop.args import TrainArgs
 from chemprop.features import BatchMolGraph
 from chemprop.nn_utils import get_activation_function, initialize_weights
@@ -146,13 +147,29 @@ class MoleculeModel(nn.Module):
 class KGModel(nn.Module):
     def __init__(self, args: TrainArgs):
         super(KGModel, self).__init__()
+        self.classification = args.dataset_type == 'classification'
+        self.multiclass = args.dataset_type == 'multiclass'
+
         self.subgraph_model = MoleculeModel(args, featurizer=True)
         graph_args = deepcopy(args)
         graph_args.depth = 0
 
+        self.output_size = args.num_tasks
+        if self.multiclass:
+            self.output_size *= args.multiclass_num_classes
+            self.num_classes = args.multiclass_num_classes
+
+        if self.classification:
+            self.sigmoid = nn.Sigmoid()
+
+        if self.multiclass:
+            self.multiclass_softmax = nn.Softmax(dim=2)
+
         # pass in atom fdim and bond fdim to MPN
-        args.atom_messages = True
-        self.graph_model = MoleculeModel(args, atom_fdim=200, bond_fdim=1)
+        #graph_args.atom_messages = True
+        # self.graph_model = MoleculeModel(args, atom_fdim=300, bond_fdim=1)
+
+        self.graph_model = DeepSetInvariantModel(Phi(300, 300), Rho(300, self.output_size)) 
 
     def forward(self,
                 batch_mol_graph: BatchMolGraph,
@@ -163,11 +180,21 @@ class KGModel(nn.Module):
 
         # Encode subgraphs
         subgraph_encodings = self.subgraph_model(batch_mol_graph)
+        print(f"## of subgraph encodings: {subgraph_encodings.shape[0]}")
 
-        # Build molecules from fully connected sets of subgraphs
-        batch_mol_graph.connect_subgraphs(subgraph_encodings)
+        # pass just the embeddings and scopes of molecules
+        molecule_lengths = [len(mol_subgraphs) 
+                            for mol_subgraphs in batch_mol_graph.subgraph_scope]
+        output = self.graph_model(subgraph_encodings, molecule_lengths)
 
-        # Encode molecules from fully connected sets of subgraphs
-        graph_encodings = self.graph_model(batch_mol_graph)
+        # Don't apply sigmoid during training b/c using BCEWithLogitsLoss
+        if self.classification and not self.training:
+            output = self.sigmoid(output)
+        if self.multiclass and not self.training:
+            output = output.reshape((output.size(0), -1, args.num_classes))  # batch size x num targets x num classes per target
+            if not self.training:
+                output = self.multiclass_softmax(output)  # to get probabilities during evaluation, but not during training as we're using CrossEntropyLoss
 
-        return graph_encodings
+        print(output)
+        return output
+
