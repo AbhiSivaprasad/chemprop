@@ -6,8 +6,6 @@ import torch.nn.functional as F
 from torch import FloatTensor
 from torch.autograd import Variable
 
-NetIO = Union[FloatTensor, Variable]
-
 
 class DeepSetInvariantModel(nn.Module):
     def __init__(self, phi: nn.Module, rho: nn.Module):
@@ -15,21 +13,19 @@ class DeepSetInvariantModel(nn.Module):
         self.phi = phi
         self.rho = rho
 
-    def forward(self, x: NetIO, split_sizes: List[int]) -> NetIO:
+    def forward(self, f_subgraphs: FloatTensor, subgraph_scopes: List[List[int]]) -> FloatTensor:
         # num_subgraphs x input_size --> num_subgraphs x hidden_size
         # compute the representation for each data point
-        x = self.phi.forward(x)
-        # sum up the representations
-        # here I have assumed that x is 2D and the each row is representation of an input, so the following operation
-        # will reduce the number of rows to 1, but it will keep the tensor as a 2D tensor.
-        group_tensors = x.split_with_sizes(split_sizes)
-        phi_list = [torch.sum(gt, dim=0, keepdim=True) for gt in group_tensors] 
-        print(phi_list[0])
-        print(phi_list[1])
-        phi_tensor = torch.cat(phi_list, dim=0)  # batch_size x hidden_size
+        phi_subgraphs = self.phi.forward(f_subgraphs)
+
+        # get a mol's representation by summing the reps of its subgraphs
+        # num_mols x hidden_size
+        phi_mols = torch.empty(len(subgraph_scopes), f_subgraphs.shape[1])
+        for i, scope in enumerate(subgraph_scopes):
+            phi_mols[i] = torch.sum(x[scope], dim=0, keepdim=True)
 
         # compute the output
-        out = self.rho.forward(phi_tensor)
+        out = self.rho.forward(phi_mols)
         
         return out
 

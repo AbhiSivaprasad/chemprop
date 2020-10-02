@@ -169,7 +169,7 @@ class KGModel(nn.Module):
         #graph_args.atom_messages = True
         # self.graph_model = MoleculeModel(args, atom_fdim=300, bond_fdim=1)
 
-        self.graph_model = DeepSetInvariantModel(Phi(300, 300), Rho(300, self.output_size)) 
+        self.deepset_model = DeepSetInvariantModel(Phi(300, 300), Rho(300, self.output_size)) 
 
     def forward(self,
                 batch_mol_graph: BatchMolGraph,
@@ -183,9 +183,7 @@ class KGModel(nn.Module):
         print(f"## of subgraph encodings: {subgraph_encodings.shape[0]}")
 
         # pass just the embeddings and scopes of molecules
-        molecule_lengths = [len(mol_subgraphs) 
-                            for mol_subgraphs in batch_mol_graph.subgraph_scope]
-        output = self.graph_model(subgraph_encodings, molecule_lengths)
+        output = self.deepset_model(subgraph_encodings, batch_mol_graph.subgraph_scope)
 
         # Don't apply sigmoid during training b/c using BCEWithLogitsLoss
         if self.classification and not self.training:

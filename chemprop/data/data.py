@@ -11,7 +11,7 @@ from .scaler import StandardScaler
 from chemprop.args import TrainArgs
 from chemprop.features import get_features_generator
 from chemprop.features import BatchMolGraph, MolGraph
-from kg_chem import extract_subgraphs_from_smiles
+from kg_chem import get_unique_subgraphs
 
 
 # Cache of graph featurizations
@@ -190,15 +190,16 @@ class MoleculeDataset(Dataset):
         if self._batch_graph is None:
             mol_graphs = []
             subgraph_scope = [[] for _ in range(len(self._data))] if knowledge_graph else None  # maps from molecule index to indices in mol_graphs
-
-            for i, d in enumerate(self._data):
-                if knowledge_graph:
-                    subgraphs = extract_subgraphs_from_smiles(d.smiles, size=subgraph_size)
-                    for subgraph in subgraphs:
-                        subgraph_scope[i].append(len(mol_graphs))
-                        mol_graph = MolGraph(d.mol, include_nodes=list(subgraph.nodes()))
-                        mol_graphs.append(mol_graph)
-                else:
+            
+            if knowledge_graph:
+                # extract unique subgraphs and a mapping between molecules and subgraphs
+                unique_subgraph_mols, subgraph_scope = get_unique_subgraphs(
+                    [d.smile for d in self._data])
+                
+                for subgraph_mol in unique_subgraph_mols:
+                    mol_graphs.append(MolGraph(subgraph_mol))
+            else: 
+                for d in self._data:
                     if d.smiles in SMILES_TO_GRAPH:
                         mol_graph = SMILES_TO_GRAPH[d.smiles]
                     else:
