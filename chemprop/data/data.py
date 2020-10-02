@@ -193,10 +193,10 @@ class MoleculeDataset(Dataset):
             
             if knowledge_graph:
                 # extract unique subgraphs and a mapping between molecules and subgraphs
-                unique_subgraph_mols, subgraph_scope = get_unique_subgraphs(
-                    [d.smile for d in self._data])
+                unique_subgraphs, subgraph_scope = get_unique_subgraphs(
+                    [d.smiles for d in self._data])
                 
-                for subgraph_mol in unique_subgraph_mols:
+                for subgraph_mol in unique_subgraphs:
                     mol_graphs.append(MolGraph(subgraph_mol))
             else: 
                 for d in self._data:

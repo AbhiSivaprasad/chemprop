@@ -15,6 +15,7 @@ from chemprop.data import get_data, get_task_names, MoleculeDataset, validate_da
 from chemprop.utils import create_logger, makedirs, timeit
 from chemprop.features import set_extra_atom_fdim
 
+from kg_chem import register_cluster, close_cluster
 
 @timeit(logger_name=TRAIN_LOGGER_NAME)
 def cross_validate(args: TrainArgs,
@@ -78,6 +79,10 @@ def cross_validate(args: TrainArgs,
         set_extra_atom_fdim(args.atom_features_size)
 
     debug(f'Number of tasks = {args.num_tasks}')
+    
+    # Building knowledge graph model uses dask cluster for speedup
+    if args.knowledge_graph:
+        register_cluster() 
 
     # Run training on different random seeds for each fold
     all_scores = defaultdict(list)
@@ -91,11 +96,15 @@ def cross_validate(args: TrainArgs,
         for metric, scores in model_scores.items():
             all_scores[metric].append(scores)
     all_scores = dict(all_scores)
+    
+    # Close dask cluster used in knowledge graph models
+    if args.knowledge_graph:
+        close_cluster()
 
     # Convert scores to numpy arrays
     for metric, scores in all_scores.items():
         all_scores[metric] = np.array(scores)
-
+    
     # Report results
     info(f'{args.num_folds}-fold cross validation')
 

@@ -147,12 +147,11 @@ class MoleculeModel(nn.Module):
 class KGModel(nn.Module):
     def __init__(self, args: TrainArgs):
         super(KGModel, self).__init__()
+        self.device = args.device
         self.classification = args.dataset_type == 'classification'
         self.multiclass = args.dataset_type == 'multiclass'
 
         self.subgraph_model = MoleculeModel(args, featurizer=True)
-        graph_args = deepcopy(args)
-        graph_args.depth = 0
 
         self.output_size = args.num_tasks
         if self.multiclass:
@@ -166,10 +165,14 @@ class KGModel(nn.Module):
             self.multiclass_softmax = nn.Softmax(dim=2)
 
         # pass in atom fdim and bond fdim to MPN
+        #graph_args = deepcopy(args)
+        #graph_args.depth = 0
         #graph_args.atom_messages = True
         # self.graph_model = MoleculeModel(args, atom_fdim=300, bond_fdim=1)
 
-        self.deepset_model = DeepSetInvariantModel(Phi(300, 300), Rho(300, self.output_size)) 
+        # subgraph embeddings --> molecule embedding
+        self.deepset_model = DeepSetInvariantModel(
+            Phi(300, 300), Rho(300, self.output_size), args.device) 
 
     def forward(self,
                 batch_mol_graph: BatchMolGraph,
@@ -183,15 +186,18 @@ class KGModel(nn.Module):
         print(f"## of subgraph encodings: {subgraph_encodings.shape[0]}")
 
         # pass just the embeddings and scopes of molecules
-        output = self.deepset_model(subgraph_encodings, batch_mol_graph.subgraph_scope)
+        output = self.deepset_model(
+                subgraph_encodings, batch_mol_graph.subgraph_scope)
 
         # Don't apply sigmoid during training b/c using BCEWithLogitsLoss
         if self.classification and not self.training:
             output = self.sigmoid(output)
         if self.multiclass and not self.training:
-            output = output.reshape((output.size(0), -1, args.num_classes))  # batch size x num targets x num classes per target
+            # batch size x num targets x num classes per target
+            output = output.reshape((output.size(0), -1, args.num_classes))  
             if not self.training:
-                output = self.multiclass_softmax(output)  # to get probabilities during evaluation, but not during training as we're using CrossEntropyLoss
+                # to get probabilities during evaluation, but not during training as we're using CrossEntropyLoss
+                output = self.multiclass_softmax(output) 
 
         print(output)
         return output
