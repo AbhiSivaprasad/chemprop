@@ -20,9 +20,11 @@ from chemprop.nn_utils import param_count
 from chemprop.utils import build_optimizer, build_lr_scheduler, get_loss_func, load_checkpoint,makedirs, \
     save_checkpoint, save_smiles_splits
 
+from kg_chem import KnowledgeBase
 
 def run_training(args: TrainArgs,
                  data: MoleculeDataset,
+                 knowledge_base: KnowledgeBase = None,
                  logger: Logger = None) -> Dict[str, List[float]]:
     """
     Loads data, trains a Chemprop model, and returns test scores for the model checkpoint with the highest validation score.
@@ -30,6 +32,7 @@ def run_training(args: TrainArgs,
     :param args: A :class:`~chemprop.args.TrainArgs` object containing arguments for
                  loading data and training the Chemprop model.
     :param data: A :class:`~chemprop.data.MoleculeDataset` containing the data.
+    :param knowledge_base: A :class:`~kg_chem.KnowledgeBase` containing smile --> subgraph mappings
     :param logger: A logger to record output.
     :return: A dictionary mapping each metric in :code:`args.metrics` to a list of values for each task.
 
@@ -120,19 +123,22 @@ def run_training(args: TrainArgs,
         class_balance=args.class_balance,
         shuffle=True,
         seed=args.seed,
-        args=args
+        args=args,
+        knowledge_base=knowledge_base
     )
     val_data_loader = MoleculeDataLoader(
         dataset=val_data,
         batch_size=args.batch_size,
         num_workers=num_workers,
-        args=args
+        args=args,
+        knowledge_base=knowledge_base
     )
     test_data_loader = MoleculeDataLoader(
         dataset=test_data,
         batch_size=args.batch_size,
         num_workers=num_workers,
-        args=args
+        args=args,
+        knowledge_base=knowledge_base
     )
 
     if args.class_balance:

@@ -280,8 +280,14 @@ class TrainArgs(CommonArgs):
     """Aggregation scheme for atomic vectors into molecular vectors"""
     aggregation_norm: int = 100
     """For norm aggregation, number by which to divide summed up atomic features"""
-    knowledge_graph: bool = False  # Whether to create a knowledge graph model
-    subgraph_size: int = 8  # Size of subgraphs to extract when knowledge_graph is True
+    knowledge_base_path: str = None 
+    """Path to pickled Knowledge Base"""
+    knowledge_graph: bool = False  
+    """Whether to create a knowledge graph model"""
+    subgraph_size: int = 8
+    """Size of subgraphs to extract when knowledge_graph is True"""
+    transformer_num_encoder_layers:int = 6
+    """Number of layers for transformer encoder of subgraph embeddings"""
 
     # Training arguments
     epochs: int = 30
@@ -440,7 +446,7 @@ class TrainArgs(CommonArgs):
                 self._crossval_index_sets = pickle.load(rf)
             self.num_folds = len(self.crossval_index_sets)
             self.seed = 0
-
+        
         # Test settings
         if self.test:
             self.epochs = 0

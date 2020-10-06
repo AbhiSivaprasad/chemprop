@@ -81,8 +81,12 @@ def cross_validate(args: TrainArgs,
     debug(f'Number of tasks = {args.num_tasks}')
     
     # Building knowledge graph model uses dask cluster for speedup
-    if args.knowledge_graph:
+    knowledge_base = None
+    if args.knowledge_base_path:
         register_cluster() 
+        
+        # load knowledge base
+        knowledge_base = KnowledgeBase().load(args.knowledge_base_path)  
 
     # Run training on different random seeds for each fold
     all_scores = defaultdict(list)
@@ -92,7 +96,7 @@ def cross_validate(args: TrainArgs,
         args.save_dir = os.path.join(save_dir, f'fold_{fold_num}')
         makedirs(args.save_dir)
         data.reset_features_and_targets()
-        model_scores = train_func(args, data, logger)
+        model_scores = train_func(args, data, knowledge_base, logger)
         for metric, scores in model_scores.items():
             all_scores[metric].append(scores)
     all_scores = dict(all_scores)

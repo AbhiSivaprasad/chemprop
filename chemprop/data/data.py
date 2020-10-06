@@ -1,4 +1,5 @@
 import threading
+from functools import partial
 from collections import OrderedDict
 from random import Random
 from typing import Dict, Iterator, List, Optional, Union
@@ -11,7 +12,7 @@ from .scaler import StandardScaler
 from chemprop.args import TrainArgs
 from chemprop.features import get_features_generator
 from chemprop.features import BatchMolGraph, MolGraph
-from kg_chem import get_unique_subgraphs
+from kg_chem import KnowledgeBase, get_unique_subgraphs
 
 
 # Cache of graph featurizations
@@ -169,7 +170,7 @@ class MoleculeDataset(Dataset):
         """
         return [d.mol for d in self._data]
 
-    def batch_graph(self, args: TrainArgs = None) -> BatchMolGraph:
+    def batch_graph(self, args: TrainArgs = None, knowledge_base: KnowledgeBase = None) -> BatchMolGraph:
         r"""
         Constructs a :class:`~chemprop.features.BatchMolGraph` with the graph featurization of all the molecules.
 
@@ -179,6 +180,7 @@ class MoleculeDataset(Dataset):
            set of :class:`MoleculeDatapoint`\ s changes, then the returned :class:`~chemprop.features.BatchMolGraph`
            will be incorrect for the underlying data.
 
+        :param knowledge_base: A knowledge base used to lookup subgraphs for knowledge graph models
         :return: A :class:`~chemprop.features.BatchMolGraph` containing the graph featurization of all the molecules.
         """
         if args is not None:
@@ -188,16 +190,17 @@ class MoleculeDataset(Dataset):
             subgraph_size = 0
 
         if self._batch_graph is None:
-            mol_graphs = []
-            subgraph_scope = [[] for _ in range(len(self._data))] if knowledge_graph else None  # maps from molecule index to indices in mol_graphs
+            mol_graphs = None
+            subgraph_scope = None  # maps from molecule index to indices in mol_graphs
             
             if knowledge_graph:
-                # extract unique subgraphs and a mapping between molecules and subgraphs
-                unique_subgraphs, subgraph_scope = get_unique_subgraphs(
-                    [d.smiles for d in self._data])
+                # subgraph scope maps from molecule index to indices in unique_subgraphs 
+                all_smiles = [d.smiles for d in self._data]
+                unique_subgraphs, subgraph_scope = (knowledge_base.get_subgraphs(all_smiles) 
+                                                    if knowledge_base 
+                                                    else get_unique_subgraphs(all_smiles, subgraph_size))
                 
-                for subgraph_mol in unique_subgraphs:
-                    mol_graphs.append(MolGraph(subgraph_mol))
+                mol_graphs = [MolGraph(subgraph) for subgraph in unique_subgraphs]
             else: 
                 for d in self._data:
                     if d.smiles in SMILES_TO_GRAPH:
@@ -432,7 +435,8 @@ class MoleculeDataLoader(DataLoader):
                  class_balance: bool = False,
                  shuffle: bool = False,
                  seed: int = 0,
-                 args: TrainArgs = None):
+                 args: TrainArgs = None,
+                 knowledge_base: KnowledgeBase = None):
         """
         :param dataset: The :class:`MoleculeDataset` containing the molecules to load.
         :param batch_size: Batch size.
@@ -444,6 +448,7 @@ class MoleculeDataLoader(DataLoader):
         :param shuffle: Whether to shuffle the data.
         :param seed: Random seed. Only needed if shuffle is True.
         :param args: Arguments.
+        :param knowledge_base: A knowledge base used to lookup subgraphs for knowledge graph models
         """
         self._dataset = dataset
         self._batch_size = batch_size
@@ -454,6 +459,7 @@ class MoleculeDataLoader(DataLoader):
         self._context = None
         self._timeout = 0
         self._args = args
+        self._knowledge_base = knowledge_base
         is_main_thread = threading.current_thread() is threading.main_thread()
         if not is_main_thread and self._num_workers > 0:
             self._context = 'forkserver'  # In order to prevent a hanging
@@ -477,10 +483,12 @@ class MoleculeDataLoader(DataLoader):
             :return: A :class:`MoleculeDataset` containing all the :class:`MoleculeDatapoint`\ s.
             """
             data = MoleculeDataset(data)
-            data.batch_graph(self._args)  # Forces computation and caching of the BatchMolGraph for the molecules
+
+            # Forces computation and caching of the BatchMolGraph for the molecules
+            data.batch_graph(self._args, self._knowledge_base)  
 
             return data
-
+        
         super(MoleculeDataLoader, self).__init__(
             dataset=self._dataset,
             batch_size=self._batch_size,
