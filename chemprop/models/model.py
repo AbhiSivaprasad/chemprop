@@ -151,8 +151,9 @@ class KGModel(nn.Module):
         self.classification = args.dataset_type == 'classification'
         self.multiclass = args.dataset_type == 'multiclass'
 
-        self.subgraph_model = MoleculeModel(args, featurizer=True)
+        self.subgraph_model = MPN(args)
 
+        # compute output size
         self.output_size = args.num_tasks
         if self.multiclass:
             self.output_size *= args.multiclass_num_classes
@@ -164,15 +165,24 @@ class KGModel(nn.Module):
         if self.multiclass:
             self.multiclass_softmax = nn.Softmax(dim=2)
 
-        # pass in atom fdim and bond fdim to MPN
-        #graph_args = deepcopy(args)
-        #graph_args.depth = 0
-        #graph_args.atom_messages = True
-        # self.graph_model = MoleculeModel(args, atom_fdim=300, bond_fdim=1)
+        subgraph_encoding_dim = args.hidden_size
 
         # subgraph embeddings --> molecule embedding
-        self.deepset_model = DeepSetInvariantModel(
-            Phi(300, 300), Rho(300, self.output_size), args.device) 
+        if args.kg_molecule_model == 'deepset':
+            self.molecule_encoder = DeepSetInvariantModel(Phi(subgraph_encoding_dim, 300), 
+                                                          Rho(300, self.output_size), 
+                                                          self.device)
+        elif args.kg_molecule_model == 'transformer': 
+            self.molecule_encoder = TransformerModel(d_model=subgraph_encoding_dim, 
+                                                     num_encoder_layers=args.transformer_num_encoder_layers,
+                                                     device=self.device)
+        
+        self.ffn = create_ffn(subgraph_encoding_dim, 
+                              self.output_size, 
+                              args.ffn_hidden_size, 
+                              args.ffn_num_layers, 
+                              args.dropout, 
+                              args.activation)
 
     def forward(self,
                 batch_mol_graph: BatchMolGraph,
@@ -186,8 +196,10 @@ class KGModel(nn.Module):
         print(f"## of subgraph encodings: {subgraph_encodings.shape[0]}")
 
         # pass just the embeddings and scopes of molecules
-        output = self.deepset_model(
+        molecule_embeddings = self.molecule_encoder(
                 subgraph_encodings, batch_mol_graph.subgraph_scope)
+       
+        output = self.ffn(molecule_embeddings)
 
         # Don't apply sigmoid during training b/c using BCEWithLogitsLoss
         if self.classification and not self.training:
