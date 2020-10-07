@@ -19,6 +19,7 @@ from chemprop.data import get_class_sizes, get_data, MoleculeDataLoader, Molecul
 from chemprop.nn_utils import param_count
 from chemprop.utils import build_optimizer, build_lr_scheduler, get_loss_func, load_checkpoint,makedirs, \
     save_checkpoint, save_smiles_splits
+import torch.nn as nn
 
 from kg_chem import KnowledgeBase
 
@@ -161,6 +162,11 @@ def run_training(args: TrainArgs,
         else:
             debug(f'Building model {model_idx}')
             model = KGModel(args) if args.knowledge_graph else MoleculeModel(args)
+
+        # if torch.cuda.device_count() > 1:
+        #     print("Using:", torch.cuda.device_count(), "GPUs")
+        #     # dim = 0 [30, xxx] -> [10, ...], [10, ...], [10, ...] on 3 GPUs
+        #     model = nn.DataParallel(model, [0, 1, 2])
 
         debug(model)
         debug(f'Number of parameters = {param_count(model):,}')

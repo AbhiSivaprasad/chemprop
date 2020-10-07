@@ -6,26 +6,23 @@ import torch.nn.functional as F
 from torch import FloatTensor
 from torch.autograd import Variable
 
-from .utils import create_ffn
-
 
 class TransformerModel(nn.Module):
-    def __init__(self, d_model: int, num_encoder_layers: int, device: str):
+    def __init__(self, input_dim: int, d_model: int, num_encoder_layers: int, num_heads: int, dropout: float, device: str):
         super(TransformerModel, self).__init__()
         self.device = device
-        self.encoder =  nn.TransformerEncoder(d_model=d_model, 
-                                              num_encoder_layers=num_encoder_layers)
+        self.input_projection = nn.Linear(input_dim, d_model)
+        self.encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=num_heads, dropout=dropout)
+        self.encoder =  nn.TransformerEncoder(encoder_layer=self.encoder_layer, 
+                                              num_layers=num_encoder_layers)
 
 
-    def forward(self, f_subgraphs: FloatTensor, subgraph_scopes: List[List[int]]) -> FloatTensor:
+    def forward(self, input_encodings: FloatTensor, subgraph_scopes: List[List[int]]) -> FloatTensor:
         # prepare input to transformer
-        max_seq_length = max(len(scope) for scope in subgraph_scopes)
-        input_encodings = torch.zeros(max_seq_length, len(subgraph_scopes), -1, device=self.device)
-        for i, scope in enumerate(subgraph_scopes):
-            input_encodings[:, i, :len(scope)] = f_subgraphs[scope]
-        
+       
         # apply transformer
-        transformer_encodings = self.encoder(input_encodings)
+        transformer_inputs = self.input_projection(input_encodings)
+        transformer_encodings = self.encoder(transformer_inputs)
 
         # sum subgraph embeddings for each molecule
         molecule_encodings = torch.sum(transformer_encodings, dim=0) 

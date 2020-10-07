@@ -6,11 +6,12 @@ import torch
 import torch.nn as nn
 
 from .mpn import MPN
-from .deepset import DeepSetInvariantModel, Phi, Rho
+from .deepset import DeepSetInvariantModel
 from chemprop.args import TrainArgs
 from chemprop.features import BatchMolGraph
 from chemprop.nn_utils import get_activation_function, initialize_weights
-
+from .transformer import TransformerModel
+from .utils import create_ffn
 
 class MoleculeModel(nn.Module):
     """A :class:`MoleculeModel` is a model which contains a message passing network following by feed-forward layers."""
@@ -169,15 +170,30 @@ class KGModel(nn.Module):
 
         # subgraph embeddings --> molecule embedding
         if args.kg_molecule_model == 'deepset':
-            self.molecule_encoder = DeepSetInvariantModel(Phi(subgraph_encoding_dim, 300), 
-                                                          Rho(300, self.output_size), 
-                                                          self.device)
+            self.molecule_encoder = DeepSetInvariantModel(input_dim=subgraph_encoding_dim, 
+                                                          output_dim=subgraph_encoding_dim, 
+                                                          hidden_dim=subgraph_encoding_dim, 
+                                                          num_layers=args.deepset_num_layers, 
+                                                          dropout=args.kg_molecule_model_dropout, 
+                                                          activation=args.activation,
+                                                          device=self.device)
+
+            self.molecule_embed_dim = subgraph_encoding_dim
+
         elif args.kg_molecule_model == 'transformer': 
-            self.molecule_encoder = TransformerModel(d_model=subgraph_encoding_dim, 
+            self.molecule_encoder = TransformerModel(input_dim=subgraph_encoding_dim,
+                                                     d_model=args.transformer_feature_dim, 
                                                      num_encoder_layers=args.transformer_num_encoder_layers,
+                                                     num_heads=args.transformer_num_heads,
+                                                     dropout=args.transformer_dropout,
                                                      device=self.device)
         
-        self.ffn = create_ffn(subgraph_encoding_dim, 
+            self.molecule_embed_dim = args.transformer_feature_dim
+        else:
+            self.molecule_encoder = None
+            self.molecule_embed_dim = subgraph_encoding_dim
+
+        self.ffn = create_ffn(self.molecule_embed_dim, 
                               self.output_size, 
                               args.ffn_hidden_size, 
                               args.ffn_num_layers, 
@@ -194,16 +210,32 @@ class KGModel(nn.Module):
         # Encode subgraphs
         subgraph_encodings = self.subgraph_model(batch_mol_graph)
         print(f"## of subgraph encodings: {subgraph_encodings.shape[0]}")
+        
+        # organize subgraph encodings by molecule
+        max_seq_length = max(len(scope) for scope in batch_mol_graph.subgraph_scope)
+        input_encodings = torch.zeros(
+            max_seq_length, 
+            len(batch_mol_graph.subgraph_scope), 
+            subgraph_encodings.shape[1], 
+            device=self.device
+        )
+        
+        # num_subgraphs, molecule, embedding
+        for i, scope in enumerate(batch_mol_graph.subgraph_scope):
+            input_encodings[:len(scope), i, :] = subgraph_encodings[scope]
 
         # pass just the embeddings and scopes of molecules
-        molecule_embeddings = self.molecule_encoder(
-                subgraph_encodings, batch_mol_graph.subgraph_scope)
+        molecule_subgraph_encodings = self.molecule_encoder(input_encodings) if self.molecule_encoder else input_encodings
+
+        # aggregate subgraph encodings of each molecule to get moleucle encodings
+        molecule_encodings = torch.sum(molecule_subgraph_encodings, dim=0)
        
-        output = self.ffn(molecule_embeddings)
+        output = self.ffn(molecule_encodings)
 
         # Don't apply sigmoid during training b/c using BCEWithLogitsLoss
         if self.classification and not self.training:
             output = self.sigmoid(output)
+
         if self.multiclass and not self.training:
             # batch size x num targets x num classes per target
             output = output.reshape((output.size(0), -1, args.num_classes))  

@@ -286,8 +286,18 @@ class TrainArgs(CommonArgs):
     """Whether to create a knowledge graph model"""
     subgraph_size: int = 8
     """Size of subgraphs to extract when knowledge_graph is True"""
-    transformer_num_encoder_layers:int = 6
+    transformer_num_encoder_layers:int = 3
     """Number of layers for transformer encoder of subgraph embeddings"""
+    kg_molecule_model:str = 'transformer'
+    """What model to use to process subgraph embeddings into molecule embedding. Options: 'transformer'|'deepset'"""
+    transformer_num_heads:int = 8
+    """Number of heads for transformer encoder of subgraph embeddings"""
+    kg_molecule_model_dropout:float = 0.2
+    """Dropout for encoder of subgraph embeddings"""
+    transformer_feature_dim:int = 512
+    """Dimension for transformer input vectors"""
+    deepset_num_layers:int = 3
+    """Number of layers in Phi function for Deepset"""
 
     # Training arguments
     epochs: int = 30

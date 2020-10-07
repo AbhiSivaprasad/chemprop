@@ -14,7 +14,7 @@ def create_ffn(input_size: int, output_size:int, hidden_size: int, layers: int, 
             dropout,
             nn.Linear(input_size, hidden_size)
         ]
-        for _ in range(args.layers - 2):
+        for _ in range(layers - 2):
             ffn.extend([
                 activation,
                 dropout,
