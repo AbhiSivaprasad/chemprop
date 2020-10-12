@@ -298,6 +298,8 @@ class TrainArgs(CommonArgs):
     """Dimension for transformer input vectors"""
     deepset_num_layers:int = 3
     """Number of layers in Phi function for Deepset"""
+    model_name:str = 'chemprop'
+    """Name of model for logging"""
 
     # Training arguments
     epochs: int = 30

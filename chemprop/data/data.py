@@ -1,3 +1,5 @@
+import math
+import torch
 import threading
 from functools import partial
 from collections import OrderedDict
@@ -482,12 +484,20 @@ class MoleculeDataLoader(DataLoader):
             :param data: A list of :class:`MoleculeDatapoint`\ s.
             :return: A :class:`MoleculeDataset` containing all the :class:`MoleculeDatapoint`\ s.
             """
-            data = MoleculeDataset(data)
+            def split(a, n):
+                k, m = divmod(len(a), n)
+                return (a[i * k + min(i, m):(i + 1) * k + min(i + 1, m)] 
+                        for i in range(n))
+
+            batch_size = math.ceil(len(data) / torch.cuda.device_count())
+            batches = [data[i:i+batch_size] for i in range(0, len(data), batch_size)] 
+            batches = [MoleculeDataset(data) for data in batches]
 
             # Forces computation and caching of the BatchMolGraph for the molecules
-            data.batch_graph(self._args, self._knowledge_base)  
+            for data in batches:
+                data.batch_graph(self._args, self._knowledge_base)  
 
-            return data
+            return batches
         
         super(MoleculeDataLoader, self).__init__(
             dataset=self._dataset,

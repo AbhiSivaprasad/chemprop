@@ -1,3 +1,4 @@
+import datetime
 from logging import Logger
 import os
 from typing import Dict, List
@@ -115,7 +116,7 @@ def run_training(args: TrainArgs,
     else:
         set_cache_graph(False)
         num_workers = args.num_workers
-
+    
     # Create data loaders
     train_data_loader = MoleculeDataLoader(
         dataset=train_data,
@@ -162,11 +163,12 @@ def run_training(args: TrainArgs,
         else:
             debug(f'Building model {model_idx}')
             model = KGModel(args) if args.knowledge_graph else MoleculeModel(args)
-
-        # if torch.cuda.device_count() > 1:
-        #     print("Using:", torch.cuda.device_count(), "GPUs")
-        #     # dim = 0 [30, xxx] -> [10, ...], [10, ...], [10, ...] on 3 GPUs
-        #     model = nn.DataParallel(model, [0, 1, 2])
+        # Check GPU count and batch accordingly
+        if torch.cuda.device_count() > 1:
+            print("Using:", torch.cuda.device_count(), "GPUs")
+            args.device = torch.device('cuda:0')  # required by data parallel
+            # use parallel model if multiple gpus
+            model = nn.DataParallel(model)
 
         debug(model)
         debug(f'Number of parameters = {param_count(model):,}')
