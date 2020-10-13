@@ -239,6 +239,13 @@ def run_training(args: TrainArgs,
         info(f'Model {model_idx} best validation {args.metric} = {best_score:.6f} on epoch {best_epoch}')
         model = load_checkpoint(os.path.join(save_dir, MODEL_FILE_NAME), device=args.device, logger=logger)
 
+        # Check GPU count and batch loaded model accordingly
+        #if torch.cuda.device_count() > 1:
+            # use parallel model if multiple gpus
+        #    model = nn.DataParallel(model)
+        
+        #model.to(args.device)
+
         test_preds = predict(
             model=model,
             data_loader=test_data_loader,

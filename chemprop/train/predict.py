@@ -25,18 +25,21 @@ def predict(model: MoleculeModel,
     preds = []
 
     for batches in tqdm(data_loader, disable=disable_progress_bar, leave=False):
-        print(len(batches))
+        batch_size = sum(map(len, batches))
+        print(batch_size)
+
         # Prepare batch
         data_list = [(batch.batch_graph(), batch.features(), batch.atom_descriptors()) 
                      for batch in batches]
-        print(len(data_list))
-        print(len(data_list[0]))
-
+        
         # Make predictions
         with torch.no_grad():
             batch_preds = model(*list(zip(*data_list)))
+            print(len(batch_preds))
+            batch_preds = batch_preds[:batch_size]
 
         batch_preds = batch_preds.data.cpu().numpy()
+        print("num batch preds", len(batch_preds))
 
         # Inverse scale if regression
         if scaler is not None:
@@ -45,5 +48,6 @@ def predict(model: MoleculeModel,
         # Collect vectors
         batch_preds = batch_preds.tolist()
         preds.extend(batch_preds)
+        print("num preds", len(preds))
 
     return preds

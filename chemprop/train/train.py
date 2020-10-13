@@ -64,6 +64,7 @@ def train(model: MoleculeModel,
         model.zero_grad()
         
         preds = model(*list(zip(*data_list))) #mol_batch, features_batch, atom_descriptors_batch)
+        preds = preds[:batch_size]
         pred_classes = (preds > 0).int()
 
         # Move tensors to correct device
@@ -75,6 +76,7 @@ def train(model: MoleculeModel,
         if args.dataset_type == 'multiclass':
             targets = targets.long()
             loss = torch.cat([loss_func(preds[:, target_index, :], targets[:, target_index]).unsqueeze(1) for target_index in range(preds.size(1))], dim=1) * class_weights * mask
+            acc = (pred_classes == targets) * mask
         else:
             loss = loss_func(preds, targets) * class_weights * mask
             acc = (pred_classes == targets) * mask

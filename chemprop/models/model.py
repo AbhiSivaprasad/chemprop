@@ -208,9 +208,11 @@ class KGModel(nn.Module):
         #assert atom_descriptors_batch is None
 
         # Encode subgraphs
-        gpu_id = int(str(self.ffn[1].weight.device)[-1:])
+        device = self.ffn[1].weight.device
+        gpu_id = int(str(device)[-1:])
         if gpu_id >= len(batch_mol_graph):
-            return np.array([])
+            return torch.tensor([[0]], device=device)
+
         batch_mol_graph = batch_mol_graph[gpu_id]
         subgraph_encodings = self.subgraph_model(batch_mol_graph)
         print(f"## of subgraph encodings: {subgraph_encodings.shape[0]}")
@@ -232,7 +234,7 @@ class KGModel(nn.Module):
         molecule_subgraph_encodings = self.molecule_encoder(input_encodings) if self.molecule_encoder else input_encodings
 
         # aggregate subgraph encodings of each molecule to get moleucle encodings
-        molecule_encodings = torch.sum(molecule_subgraph_encodings, dim=0)
+        molecule_encodings = torch.mean(molecule_subgraph_encodings, dim=0)
        
         output = self.ffn(molecule_encodings)
 
@@ -246,6 +248,6 @@ class KGModel(nn.Module):
             if not self.training:
                 # to get probabilities during evaluation, but not during training as we're using CrossEntropyLoss
                 output = self.multiclass_softmax(output) 
-
+        #print(output.shape)
         return output
 
