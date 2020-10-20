@@ -17,15 +17,9 @@ class TransformerModel(nn.Module):
                                               num_layers=num_encoder_layers)
 
 
-    def forward(self, input_encodings: FloatTensor, subgraph_scopes: List[List[int]]) -> FloatTensor:
-        # prepare input to transformer
-       
-        # apply transformer
+    def forward(self, input_encodings: FloatTensor) -> FloatTensor:
+       # apply transformer
         transformer_inputs = self.input_projection(input_encodings)
         transformer_encodings = self.encoder(transformer_inputs)
 
-        # sum subgraph embeddings for each molecule
-        molecule_encodings = torch.sum(transformer_encodings, dim=0) 
-
-        # batch_size x embedding
-        return molecule_encodings
+        return transformer_encodings

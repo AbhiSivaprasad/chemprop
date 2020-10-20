@@ -106,14 +106,17 @@ def train(model: MoleculeModel,
             acc_sum = loss_sum = iter_count = 0
 
             lrs_str = ', '.join(f'lr_{i} = {lr:.4e}' for i, lr in enumerate(lrs))
-            debug(f'Loss = {loss_avg:.4e}, Acc = {acc_avg:.2f}, PNorm = {pnorm:.4f}, GNorm = {gnorm:.4f}, {lrs_str}')
+            debug(f'Iteration #{n_iter}: Loss = {loss_avg:.4e}, Acc = {acc_avg:.2f}, PNorm = {pnorm:.4f}, GNorm = {gnorm:.4f}, {lrs_str}')
 
             if writer is not None:
-                writer.add_scalar('train_acc', acc_avg, n_iter)
+                if args.dataset_type == 'classification':
+                    writer.add_scalar('train_acc', acc_avg, n_iter)
                 writer.add_scalar('train_loss', loss_avg, n_iter)
                 writer.add_scalar('param_norm', pnorm, n_iter)
                 writer.add_scalar('gradient_norm', gnorm, n_iter)
                 for i, lr in enumerate(lrs):
                     writer.add_scalar(f'learning_rate_{i}', lr, n_iter)
+            else:
+                debug(f'WRITER IS NONE')
 
     return n_iter

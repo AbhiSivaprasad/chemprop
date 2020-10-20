@@ -290,9 +290,11 @@ class TrainArgs(CommonArgs):
     """Number of layers for transformer encoder of subgraph embeddings"""
     kg_molecule_model:str = 'transformer'
     """What model to use to process subgraph embeddings into molecule embedding. Options: 'transformer'|'deepset'"""
+    subgraph_agg_fn: Literal['mean', 'sum'] = 'sum'
+    """Function to aggregate subgraph embeddings into molecule embedding. Options: 'sum'|'avg'"""
     transformer_num_heads:int = 8
     """Number of heads for transformer encoder of subgraph embeddings"""
-    kg_molecule_model_dropout:float = 0.2
+    kg_molecule_model_dropout:float = 0.3
     """Dropout for encoder of subgraph embeddings"""
     transformer_feature_dim:int = 512
     """Dimension for transformer input vectors"""
