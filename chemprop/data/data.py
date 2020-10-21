@@ -11,6 +11,7 @@ from rdkit import Chem
 from torch.utils.data import DataLoader, Dataset, Sampler
 
 from .scaler import StandardScaler
+from .utils import DistributedSamplerWrapper
 from chemprop.args import TrainArgs
 from chemprop.features import get_features_generator
 from chemprop.features import BatchMolGraph, MolGraph
@@ -467,12 +468,14 @@ class MoleculeDataLoader(DataLoader):
             self._context = 'forkserver'  # In order to prevent a hanging
             self._timeout = 3600  # Just for sure that the DataLoader won't hang
 
-        self._sampler = MoleculeSampler(
+        sampler = MoleculeSampler(
             dataset=self._dataset,
             class_balance=self._class_balance,
             shuffle=self._shuffle,
             seed=self._seed
         )
+
+        self._distributed_sampler = DistributedSamplerWrapper(sampler)
 
         def construct_molecule_batch(data: List[MoleculeDatapoint]) -> MoleculeDataset:
             r"""
@@ -484,25 +487,14 @@ class MoleculeDataLoader(DataLoader):
             :param data: A list of :class:`MoleculeDatapoint`\ s.
             :return: A :class:`MoleculeDataset` containing all the :class:`MoleculeDatapoint`\ s.
             """
-            def split(a, n):
-                k, m = divmod(len(a), n)
-                return (a[i * k + min(i, m):(i + 1) * k + min(i + 1, m)] 
-                        for i in range(n))
-
-            batch_size = math.ceil(len(data) / torch.cuda.device_count())
-            batches = [data[i:i+batch_size] for i in range(0, len(data), batch_size)] 
-            batches = [MoleculeDataset(data) for data in batches]
-
-            # Forces computation and caching of the BatchMolGraph for the molecules
-            for data in batches:
-                data.batch_graph(self._args, self._knowledge_base)  
-
-            return batches
+            data = MoleculeDataset(data)
+            data.batch_graph(self._args, self._knowledge_base)  
+            return data
         
         super(MoleculeDataLoader, self).__init__(
             dataset=self._dataset,
             batch_size=self._batch_size,
-            sampler=self._sampler,
+            sampler=self._distributed_sampler,
             num_workers=self._num_workers,
             collate_fn=construct_molecule_batch,
             multiprocessing_context=self._context,

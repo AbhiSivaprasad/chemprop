@@ -21,10 +21,12 @@ from chemprop.nn_utils import param_count
 from chemprop.utils import build_optimizer, build_lr_scheduler, get_loss_func, load_checkpoint,makedirs, \
     save_checkpoint, save_smiles_splits
 import torch.nn as nn
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 from kg_chem import KnowledgeBase
 
-def run_training(args: TrainArgs,
+def run_training(rank: int,
+                 args: TrainArgs,
                  data: MoleculeDataset,
                  knowledge_base: KnowledgeBase = None,
                  logger: Logger = None) -> Dict[str, List[float]]:
@@ -126,8 +128,9 @@ def run_training(args: TrainArgs,
         shuffle=True,
         seed=args.seed,
         args=args,
-        knowledge_base=knowledge_base
+        knowledge_base=knowledge_base,
     )
+    
     val_data_loader = MoleculeDataLoader(
         dataset=val_data,
         batch_size=args.batch_size,
@@ -135,6 +138,7 @@ def run_training(args: TrainArgs,
         args=args,
         knowledge_base=knowledge_base
     )
+   
     test_data_loader = MoleculeDataLoader(
         dataset=test_data,
         batch_size=args.batch_size,
@@ -151,10 +155,13 @@ def run_training(args: TrainArgs,
         # Tensorboard writer
         save_dir = os.path.join(args.save_dir, f'model_{model_idx}')
         makedirs(save_dir)
-        try:
-            writer = SummaryWriter(log_dir=save_dir)
-        except:
-            writer = SummaryWriter(logdir=save_dir)
+
+        writer = None
+        if rank == 0:
+            try:
+                writer = SummaryWriter(log_dir=save_dir)
+            except:
+                writer = SummaryWriter(logdir=save_dir)
 
         # Load/build model
         if args.checkpoint_paths is not None:
@@ -163,23 +170,18 @@ def run_training(args: TrainArgs,
         else:
             debug(f'Building model {model_idx}')
             model = KGModel(args) if args.knowledge_graph else MoleculeModel(args)
-        # Check GPU count and batch accordingly
-        if torch.cuda.device_count() > 1:
-            print("Using:", torch.cuda.device_count(), "GPUs")
-            args.device = torch.device('cuda:0')  # required by data parallel
-            # use parallel model if multiple gpus
-            model = nn.DataParallel(model)
+            model = DDP(model, device_ids=[rank])
 
         debug(model)
         debug(f'Number of parameters = {param_count(model):,}')
         if args.cuda:
             debug('Moving model to cuda')
-        else:
-            print('NO CUDA')
-        model = model.to(args.device)
+            model = model.to(rank)
 
         # Ensure that model is saved in correct location for evaluation if 0 epochs
-        save_checkpoint(os.path.join(save_dir, MODEL_FILE_NAME), model, scaler, features_scaler, args)
+        # TODO: ENSURE SAFE
+        if rank == 0:
+            save_checkpoint(os.path.join(save_dir, MODEL_FILE_NAME), model, scaler, features_scaler, args)
 
         # Optimizers
         optimizer = build_optimizer(model, args)
@@ -206,6 +208,7 @@ def run_training(args: TrainArgs,
             )
             if isinstance(scheduler, ExponentialLR):
                 scheduler.step()
+
             val_scores = evaluate(
                 model=model,
                 data_loader=val_data_loader,
@@ -216,24 +219,30 @@ def run_training(args: TrainArgs,
                 logger=logger
             )
 
-            for metric, scores in val_scores.items():
-                # Average validation score
-                avg_val_score = np.nanmean(scores)
-                debug(f'Validation {metric} = {avg_val_score:.6f}')
-                writer.add_scalar(f'validation_{metric}', avg_val_score, n_iter)
+            if rank == 0:
+                for metric, scores in val_scores.items():
+                    # Average validation score
+                    avg_val_score = np.nanmean(scores)
+                    debug(f'Validation {metric} = {avg_val_score:.6f}')
+                    writer.add_scalar(f'validation_{metric}', avg_val_score, n_iter)
 
-                if args.show_individual_scores:
-                    # Individual validation scores
-                    for task_name, val_score in zip(args.task_names, scores):
-                        debug(f'Validation {task_name} {metric} = {val_score:.6f}')
-                        writer.add_scalar(f'validation_{task_name}_{metric}', val_score, n_iter)
+                    if args.show_individual_scores:
+                        # Individual validation scores
+                        for task_name, val_score in zip(args.task_names, scores):
+                            debug(f'Validation {task_name} {metric} = {val_score:.6f}')
+                            writer.add_scalar(f'validation_{task_name}_{metric}', val_score, n_iter)
 
-            # Save model checkpoint if improved validation score
-            avg_val_score = np.nanmean(val_scores[args.metric])
-            if args.minimize_score and avg_val_score < best_score or \
-                    not args.minimize_score and avg_val_score > best_score:
-                best_score, best_epoch = avg_val_score, epoch
-                save_checkpoint(os.path.join(save_dir, MODEL_FILE_NAME), model, scaler, features_scaler, args)
+                # Save model checkpoint if improved validation score
+                avg_val_score = np.nanmean(val_scores[args.metric])
+                if args.minimize_score and avg_val_score < best_score or \
+                        not args.minimize_score and avg_val_score > best_score:
+                    best_score, best_epoch = avg_val_score, epoch
+                    save_checkpoint(os.path.join(save_dir, MODEL_FILE_NAME), model, scaler, features_scaler, args)
+
+        
+        # Test will be done on one GPU
+        if rank != 0:
+            return {}
 
         # Evaluate on test set using model with best validation score
         info(f'Model {model_idx} best validation {args.metric} = {best_score:.6f} on epoch {best_epoch}')
@@ -267,7 +276,9 @@ def run_training(args: TrainArgs,
                 for task_name, test_score in zip(args.task_names, scores):
                     info(f'Model {model_idx} test {task_name} {metric} = {test_score:.6f}')
                     writer.add_scalar(f'test_{task_name}_{metric}', test_score, n_iter)
-        writer.close()
+
+        if writer:
+            writer.close()
 
     # Evaluate ensemble on test set
     avg_test_preds = (sum_test_preds / args.ensemble_size).tolist()

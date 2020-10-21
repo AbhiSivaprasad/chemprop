@@ -24,17 +24,10 @@ def predict(model: MoleculeModel,
 
     preds = []
 
-    for batches in tqdm(data_loader, disable=disable_progress_bar, leave=False):
-        batch_size = sum(map(len, batches))
-
-        # Prepare batch
-        data_list = [(batch.batch_graph(), batch.features(), batch.atom_descriptors()) 
-                     for batch in batches]
-        
+    for batch in tqdm(data_loader, disable=disable_progress_bar, leave=False):
         # Make predictions
         with torch.no_grad():
-            batch_preds = model(*list(zip(*data_list)))
-            batch_preds = batch_preds[:batch_size]
+            batch_preds = model(batch.batch_graph(), batch.features(), batch.atom_descriptors())
 
         batch_preds = batch_preds.data.cpu().numpy()
 

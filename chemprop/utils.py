@@ -71,7 +71,8 @@ def save_checkpoint(path: str,
     torch.save(state, path)
 
 
-def load_checkpoint(path: str,
+def load_checkpoint(rank: int,
+                    path: str,
                     device: torch.device = None,
                     logger: logging.Logger = None) -> MoleculeModel:
     """
@@ -88,7 +89,8 @@ def load_checkpoint(path: str,
         debug = info = print
 
     # Load model and args
-    state = torch.load(path, map_location=lambda storage, loc: storage)
+    map_location = {f'cuda:0' : f'cuda:{rank}'}  # saved in GPU 0. Map location to current GPU
+    state = torch.load(path, map_location=map_location)
     args = TrainArgs()
     args.from_dict(vars(state['args']), skip_unsettable=True)
     loaded_state_dict = state['state_dict']
@@ -96,14 +98,8 @@ def load_checkpoint(path: str,
     if device is not None:
         args.device = device
 
-    # Build model TODO: abstract away model creation
     model = KGModel(args) if args.knowledge_graph else MoleculeModel(args)
-    if torch.cuda.device_count() > 1:
-        model = nn.DataParallel(model)
-
-        # 0 device is default master node in DataParallel
-        assert args.device == torch.device('cuda:0')
-
+    model = DDP(model, device_ids=[rank])
     model_state_dict = model.state_dict()
 
     # Skip missing parameters and parameters of mismatched size
