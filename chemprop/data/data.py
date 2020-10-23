@@ -186,7 +186,7 @@ class MoleculeDataset(Dataset):
         :return: A :class:`~chemprop.features.BatchMolGraph` containing the graph featurization of all the molecules.
         """
         if args is not None:
-            knowledge_graph, subgraph_size = args.knowledge_graph, args.subgraph_size
+            knowledge_graph, subgraph_size, min_subgraph_size = args.knowledge_graph, args.subgraph_size, args.min_subgraph_size
         else:
             knowledge_graph = False
             subgraph_size = 0
@@ -198,7 +198,8 @@ class MoleculeDataset(Dataset):
             if knowledge_graph:
                 # subgraph scope maps from molecule index to indices in unique_subgraphs 
                 all_smiles = [d.smiles for d in self._data]
-                unique_subgraphs, subgraph_scope = (knowledge_base.get_subgraphs(all_smiles) 
+
+                unique_subgraphs, subgraph_scope = (knowledge_base.get_subgraphs(all_smiles, min_subgraph_size, subgraph_size) 
                                                     if knowledge_base 
                                                     else get_unique_subgraphs(all_smiles, subgraph_size))
                 

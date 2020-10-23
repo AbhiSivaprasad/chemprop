@@ -184,6 +184,7 @@ class KGModel(nn.Module):
                                                      d_model=args.transformer_feature_dim, 
                                                      num_encoder_layers=args.transformer_num_encoder_layers,
                                                      num_heads=args.transformer_num_heads,
+                                                     dim_feedforward=args.transformer_dim_feedforward,
                                                      dropout=args.kg_molecule_model_dropout,
                                                      device=self.device)
         

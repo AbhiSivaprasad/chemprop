@@ -286,8 +286,12 @@ class TrainArgs(CommonArgs):
     """Whether to create a knowledge graph model"""
     subgraph_size: int = 8
     """Size of subgraphs to extract when knowledge_graph is True"""
+    min_subgraph_size: int = 1
+    """Minimum size of subgraphs to extract when knowledge_graph is True"""
     transformer_num_encoder_layers:int = 3
     """Number of layers for transformer encoder of subgraph embeddings"""
+    transformer_dim_feedforward:int = 2048
+    """Size of feedforward layer in transformer model"""
     kg_molecule_model:str = 'transformer'
     """What model to use to process subgraph embeddings into molecule embedding. Options: 'transformer'|'deepset'"""
     subgraph_agg_fn: Literal['mean', 'sum'] = 'sum'
