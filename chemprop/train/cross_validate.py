@@ -97,7 +97,7 @@ def cross_validate(args: TrainArgs,
     knowledge_base = None
     if args.knowledge_base_path:
         # load knowledge base
-        knowledge_base = KnowledgeBase().load(args.knowledge_base_path)  
+        knowledge_base = KnowledgeBase.load(path=args.knowledge_base_path)  
 
     # Run training on different random seeds for each fold
     all_scores = defaultdict(list)
