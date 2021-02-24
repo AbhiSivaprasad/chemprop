@@ -1,5 +1,7 @@
-from argparse import Namespace
+import np
+import random
 import csv
+from argparse import Namespace
 from datetime import timedelta
 from functools import wraps
 import logging
@@ -453,3 +455,11 @@ def save_smiles_splits(data_path: str,
 
     with open(os.path.join(save_dir, 'split_indices.pckl'), 'wb') as f:
         pickle.dump(all_split_indices, f)
+
+
+def set_all_seeds(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.backends.cudnn.deterministic = True

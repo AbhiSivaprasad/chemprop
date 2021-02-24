@@ -19,7 +19,7 @@ from chemprop.constants import MODEL_FILE_NAME
 from chemprop.data import get_class_sizes, get_data, MoleculeDataLoader, MoleculeDataset, set_cache_graph, split_data
 from chemprop.nn_utils import param_count
 from chemprop.utils import build_optimizer, build_lr_scheduler, get_loss_func, load_checkpoint,makedirs, \
-    save_checkpoint, save_smiles_splits
+    save_checkpoint, save_smiles_splits, set_all_seeds
 import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 
@@ -47,7 +47,7 @@ def run_training(rank: int,
         debug = info = print
 
     # Set pytorch seed for random initial weights
-    torch.manual_seed(args.pytorch_seed)
+    set_all_seeds(args.pytorch_seed)
 
     # Split data
     debug(f'Splitting data with seed {args.seed}')
@@ -179,7 +179,6 @@ def run_training(rank: int,
             model = model.to(rank)
 
         # Ensure that model is saved in correct location for evaluation if 0 epochs
-        # TODO: ENSURE SAFE
         if rank == 0:
             save_checkpoint(os.path.join(save_dir, MODEL_FILE_NAME), model, scaler, features_scaler, args)
 
@@ -209,17 +208,19 @@ def run_training(rank: int,
             if isinstance(scheduler, ExponentialLR):
                 scheduler.step()
 
-            val_scores = evaluate(
-                model=model,
-                data_loader=val_data_loader,
-                num_tasks=args.num_tasks,
-                metrics=args.metrics,
-                dataset_type=args.dataset_type,
-                scaler=scaler,
-                logger=logger
-            )
-
             if rank == 0:
+                # only one process will eval on val set
+                val_scores = evaluate(
+                    model=model,
+                    data_loader=val_data_loader,
+                    num_tasks=args.num_tasks,
+                    metrics=args.metrics,
+                    dataset_type=args.dataset_type,
+                    scaler=scaler,
+                    logger=logger
+                )
+
+                # Log validation metrics (move to wandb)
                 for metric, scores in val_scores.items():
                     # Average validation score
                     avg_val_score = np.nanmean(scores)
@@ -265,6 +266,7 @@ def run_training(rank: int,
         if len(test_preds) != 0:
             sum_test_preds += np.array(test_preds)
 
+        # Final test metrics --> move to wandb
         # Average test score
         for metric, scores in test_scores.items():
             avg_test_score = np.nanmean(scores)

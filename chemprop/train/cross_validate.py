@@ -8,6 +8,7 @@ from typing import Callable, Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
+import torch.multiprocessing as mp
 
 from .run_training import run_training
 from chemprop.args import TrainArgs
@@ -97,7 +98,7 @@ def cross_validate(args: TrainArgs,
     knowledge_base = None
     if args.knowledge_base_path:
         # load knowledge base
-        knowledge_base = KnowledgeBase().load(args.knowledge_base_path)  
+        knowledge_base = KnowledgeBase.load(args.knowledge_base_path)  
 
     # Run training on different random seeds for each fold
     all_scores = defaultdict(list)
@@ -107,7 +108,13 @@ def cross_validate(args: TrainArgs,
         args.save_dir = os.path.join(save_dir, f'fold_{fold_num}')
         makedirs(args.save_dir)
         data.reset_features_and_targets()
+
+        # launch training in parallel
+        os.environ['MASTER_ADDR'] = args.master_addr
+        os.environ['MASTER_PORT'] = args.master_port
+        mp.spawn(train_func, nprocs=args.world_size, args=(args, data, knowledge_base, logger))
         model_scores = train_func(args, data, knowledge_base, logger)
+
         for metric, scores in model_scores.items():
             all_scores[metric].append(scores)
     all_scores = dict(all_scores)

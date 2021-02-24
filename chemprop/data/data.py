@@ -468,14 +468,17 @@ class MoleculeDataLoader(DataLoader):
             self._context = 'forkserver'  # In order to prevent a hanging
             self._timeout = 3600  # Just for sure that the DataLoader won't hang
 
-        sampler = MoleculeSampler(
+        self._sampler = MoleculeSampler(
             dataset=self._dataset,
             class_balance=self._class_balance,
             shuffle=self._shuffle,
             seed=self._seed
         )
 
-        self._distributed_sampler = DistributedSamplerWrapper(sampler)
+        if args.world_size > 1:
+            # shuffling is done in underlying sampler
+            self._distributed_sampler = DistributedSamplerWrapper(
+                self._sampler, num_replicas=args.world_size, rank=rank, shuffle=False)
 
         def construct_molecule_batch(data: List[MoleculeDatapoint]) -> MoleculeDataset:
             r"""
@@ -491,10 +494,11 @@ class MoleculeDataLoader(DataLoader):
             data.batch_graph(self._args, self._knowledge_base)  
             return data
         
+        # shuffling done by sampler
         super(MoleculeDataLoader, self).__init__(
             dataset=self._dataset,
             batch_size=self._batch_size,
-            sampler=self._distributed_sampler,
+            sampler=self._distributed_sampler if args.world_size > 1 else self._sampler,
             num_workers=self._num_workers,
             collate_fn=construct_molecule_batch,
             multiprocessing_context=self._context,
