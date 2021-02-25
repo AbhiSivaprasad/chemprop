@@ -2,6 +2,8 @@ from collections import defaultdict
 import logging
 from typing import Dict, List
 
+import wandb
+
 from .predict import predict
 from chemprop.data import MoleculeDataLoader, StandardScaler
 from chemprop.models import MoleculeModel
@@ -109,5 +111,10 @@ def evaluate(model: MoleculeModel,
         dataset_type=dataset_type,
         logger=logger
     )
+
+    wandb.log("test_results", results)
+
+    torch.onnx.export(model, None, "model.onnx")
+    wandb.save("model.onnx")
 
     return results

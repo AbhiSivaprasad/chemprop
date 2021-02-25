@@ -2,6 +2,7 @@ from logging import Logger
 import os
 from typing import Dict, List
 
+import wandb
 import numpy as np
 import pandas as pd
 from tensorboardX import SummaryWriter
@@ -20,6 +21,7 @@ from chemprop.nn_utils import param_count
 from chemprop.utils import build_optimizer, build_lr_scheduler, get_loss_func, load_checkpoint,makedirs, \
     save_checkpoint, save_smiles_splits
 
+WANDB_API_KEY="API KEY GOES HERE"
 
 def run_training(args: TrainArgs,
                  data: MoleculeDataset,
@@ -158,6 +160,20 @@ def run_training(args: TrainArgs,
         if args.cuda:
             debug('Moving model to cuda')
         model = model.to(args.device)
+
+
+        hyperparams = dict(
+            seed = args.seed,
+            pytorch_seed = args.pytorch_seed,
+            epochs = args.epochs,
+            warmup_epochs = args.warmup_epochs,
+            init_lr = args.init_lr,
+            max_lr = args.max_lr,
+            final_lr = args.final_lr,
+            grad_clip = args.grad_clip,
+            class_balance = args.class_balance
+        )
+        wandb.init(project=f"chemprop-{model_idx}", config=hyperparams)
 
         # Ensure that model is saved in correct location for evaluation if 0 epochs
         save_checkpoint(os.path.join(save_dir, MODEL_FILE_NAME), model, scaler, features_scaler, args)

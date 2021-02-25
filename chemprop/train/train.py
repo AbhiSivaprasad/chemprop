@@ -7,6 +7,7 @@ import torch.nn as nn
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler
 from tqdm import tqdm
+import wandb
 
 from chemprop.args import TrainArgs
 from chemprop.data import MoleculeDataLoader, MoleculeDataset
@@ -35,6 +36,7 @@ def train(model: MoleculeModel,
     :param n_iter: The number of iterations (training examples) trained on so far.
     :param logger: A logger for recording output.
     :param writer: A tensorboardX SummaryWriter.
+    :param name: The name of the model being trained, e.g. chemprop-2
     :return: The total number of iterations (training examples) trained on so far.
     """
     debug = logger.debug if logger is not None else print
@@ -42,6 +44,8 @@ def train(model: MoleculeModel,
     model.train()
     loss_sum = iter_count = 0
 
+    wandb.watch(model, loss, log="all", log_freq=args.log_frequency)
+    
     for batch in tqdm(data_loader, total=len(data_loader), leave=False):
         # Prepare batch
         batch: MoleculeDataset
@@ -89,6 +93,7 @@ def train(model: MoleculeModel,
 
             lrs_str = ', '.join(f'lr_{i} = {lr:.4e}' for i, lr in enumerate(lrs))
             debug(f'Loss = {loss_avg:.4e}, PNorm = {pnorm:.4f}, GNorm = {gnorm:.4f}, {lrs_str}')
+            wandb.log({"train_loss": loss_avg, "param norm": pnorm, "gradient_norm": gnorm}, step=n_iter)
 
             if writer is not None:
                 writer.add_scalar('train_loss', loss_avg, n_iter)
