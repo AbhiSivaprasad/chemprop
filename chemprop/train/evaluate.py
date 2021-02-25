@@ -112,9 +112,9 @@ def evaluate(model: MoleculeModel,
         logger=logger
     )
 
-    wandb.log("test_results", results)
-
-    torch.onnx.export(model, None, "model.onnx")
-    wandb.save("model.onnx")
+    if logger == "wandb":
+        wandb.log("test_results", results)
+        torch.onnx.export(model, None, "model.onnx")
+        wandb.save("model.onnx")
 
     return results

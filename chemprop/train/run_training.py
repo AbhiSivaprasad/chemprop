@@ -173,7 +173,8 @@ def run_training(args: TrainArgs,
             grad_clip = args.grad_clip,
             class_balance = args.class_balance
         )
-        wandb.init(project=f"chemprop-{model_idx}", config=hyperparams)
+        if logger == "wandb":
+            wandb.init(project=f"chemprop-{model_idx}", config=hyperparams)
 
         # Ensure that model is saved in correct location for evaluation if 0 epochs
         save_checkpoint(os.path.join(save_dir, MODEL_FILE_NAME), model, scaler, features_scaler, args)

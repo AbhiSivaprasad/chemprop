@@ -34,12 +34,11 @@ def train(model: MoleculeModel,
     :param scheduler: A learning rate scheduler.
     :param args: A :class:`~chemprop.args.TrainArgs` object containing arguments for training the model.
     :param n_iter: The number of iterations (training examples) trained on so far.
-    :param logger: A logger for recording output.
+    :param logger: A logger for recording output. Is the string "wandb" when wandb logging is sought.
     :param writer: A tensorboardX SummaryWriter.
-    :param name: The name of the model being trained, e.g. chemprop-2
     :return: The total number of iterations (training examples) trained on so far.
     """
-    debug = logger.debug if logger is not None else print
+    debug = logger.debug if logger is not None and logger != "wandb" else print
     
     model.train()
     loss_sum = iter_count = 0
@@ -93,7 +92,8 @@ def train(model: MoleculeModel,
 
             lrs_str = ', '.join(f'lr_{i} = {lr:.4e}' for i, lr in enumerate(lrs))
             debug(f'Loss = {loss_avg:.4e}, PNorm = {pnorm:.4f}, GNorm = {gnorm:.4f}, {lrs_str}')
-            wandb.log({"train_loss": loss_avg, "param norm": pnorm, "gradient_norm": gnorm}, step=n_iter)
+            if logger == "wandb":
+                wandb.log({"train_loss": loss_avg, "param norm": pnorm, "gradient_norm": gnorm}, step=n_iter)
 
             if writer is not None:
                 writer.add_scalar('train_loss', loss_avg, n_iter)
