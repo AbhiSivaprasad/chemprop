@@ -148,7 +148,7 @@ class MoleculeModel(nn.Module):
 class KGModel(nn.Module):
     def __init__(self, args: TrainArgs):
         super(KGModel, self).__init__()
-        self.device = args.device
+        self.device = torch.device(f"cuda:{args.rank}")
         self.classification = args.dataset_type == 'classification'
         self.multiclass = args.dataset_type == 'multiclass'
 
@@ -208,18 +208,8 @@ class KGModel(nn.Module):
                 batch_mol_graph: BatchMolGraph,
                 features_batch: List[np.ndarray] = None,
                 atom_descriptors_batch: List[np.ndarray] = None) -> torch.FloatTensor:
-        #assert features_batch is None
-        #assert atom_descriptors_batch is None
-
         # Encode subgraphs
-        device = self.ffn[1].weight.device
-        gpu_id = int(str(device)[-1:])
-        if gpu_id >= len(batch_mol_graph):
-            return torch.tensor([[0]], device=device)
-
-        batch_mol_graph = batch_mol_graph[gpu_id]
         subgraph_encodings = self.subgraph_model(batch_mol_graph)
-        #print(f"## of subgraph encodings: {subgraph_encodings.shape[0]}")
         
         # organize subgraph encodings by molecule
         max_seq_length = max(len(scope) for scope in batch_mol_graph.subgraph_scope)
@@ -227,7 +217,7 @@ class KGModel(nn.Module):
             max_seq_length, 
             len(batch_mol_graph.subgraph_scope), 
             subgraph_encodings.shape[1], 
-            device=device
+            device=self.device
         )
         
         # num_subgraphs, molecule, embedding

@@ -1,14 +1,16 @@
 import datetime
-from collections import defaultdict
 import csv
-from logging import Logger
 import os
 import sys
-from typing import Callable, Dict, List, Tuple
-
 import numpy as np
 import pandas as pd
 import torch.multiprocessing as mp
+
+from itertools import repeat
+from collections import defaultdict
+from logging import Logger
+from typing import Callable, Dict, List, Tuple
+from kg_chem import KnowledgeBase
 
 from .run_training import run_training
 from chemprop.args import TrainArgs
@@ -16,8 +18,6 @@ from chemprop.constants import TEST_SCORES_FILE_NAME, TRAIN_LOGGER_NAME
 from chemprop.data import get_data, get_task_names, MoleculeDataset, validate_dataset_type
 from chemprop.utils import create_logger, makedirs, timeit
 from chemprop.features import set_extra_atom_fdim
-
-from kg_chem import KnowledgeBase
 
 @timeit(logger_name=TRAIN_LOGGER_NAME)
 def cross_validate(args: TrainArgs,
@@ -73,7 +73,8 @@ def cross_validate(args: TrainArgs,
 
     # Save args
     makedirs(args.save_dir)
-    args.save(os.path.join(args.save_dir, 'args.json'))
+    args_path = os.path.join(args.save_dir, 'args.json')
+    args.save(args_path)
 
     # Get data
     debug('Loading data')
@@ -112,8 +113,20 @@ def cross_validate(args: TrainArgs,
         # launch training in parallel
         os.environ['MASTER_ADDR'] = args.master_addr
         os.environ['MASTER_PORT'] = args.master_port
-        mp.spawn(train_func, nprocs=args.world_size, args=(args, data, knowledge_base, logger))
-        model_scores = train_func(args, data, knowledge_base, logger)
+
+        # args is not picklable so each process will read the args file
+        
+        mp.set_start_method('spawn', force=True)
+        pool = mp.Pool(processes=args.world_size, maxtasksperchild=1)
+        process_outputs = pool.starmap(
+            train_func, 
+            [(rank, args_path, data, knowledge_base, logger) for rank in range(args.world_size)]
+        )
+
+        print("Multiprocessing Successful")
+
+        # we only collect the metrics from process 0
+        model_scores = process_outputs[0]
 
         for metric, scores in model_scores.items():
             all_scores[metric].append(scores)
