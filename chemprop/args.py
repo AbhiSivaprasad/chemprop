@@ -244,6 +244,14 @@ class TrainArgs(CommonArgs):
     save_preds: bool = False
     """Whether to save test split predictions during training."""
 
+    # DDP arguments
+    world_size: int = 1
+    """Number of GPUs to use"""
+    master_addr: str = "127.0.0.1"
+    """Address of process 0 which each DDP process will connect to"""
+    master_port: str = "8888"
+    """Port of process 0 which each DDP process will connect to"""
+
     # Model arguments
     bias: bool = False
     """Whether to add bias to linear layers."""

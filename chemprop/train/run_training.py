@@ -1,12 +1,14 @@
 import datetime
-from logging import Logger
+import sys
 import os
 from typing import Dict, List
+from logging import Logger
 
 import numpy as np
 import pandas as pd
 from tensorboardX import SummaryWriter
 import torch
+import torch.distributed as dist
 from tqdm import trange
 from torch.optim.lr_scheduler import ExponentialLR
 
@@ -19,12 +21,14 @@ from chemprop.constants import MODEL_FILE_NAME
 from chemprop.data import get_class_sizes, get_data, MoleculeDataLoader, MoleculeDataset, set_cache_graph, split_data
 from chemprop.nn_utils import param_count
 from chemprop.utils import build_optimizer, build_lr_scheduler, get_loss_func, load_checkpoint,makedirs, \
-    save_checkpoint, save_smiles_splits
+    save_checkpoint, save_smiles_splits, set_all_seeds
 import torch.nn as nn
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 from kg_chem import KnowledgeBase
 
-def run_training(args: TrainArgs,
+def run_training(rank: int,
+                 args_path: str,
                  data: MoleculeDataset,
                  knowledge_base: KnowledgeBase = None,
                  logger: Logger = None) -> Dict[str, List[float]]:
@@ -43,9 +47,25 @@ def run_training(args: TrainArgs,
         debug, info = logger.debug, logger.info
     else:
         debug = info = print
+    
+    print(f"Process {rank} spawned successfully")
+
+    # Read args
+    args = TrainArgs()
+    args.load(args_path, skip_unsettable=True)
+    args.device = torch.device(f"cuda:{rank}")
+    args.rank = rank
+
+    # Synchronize with other processes
+    dist.init_process_group(                                   
+        backend='nccl',                                         
+        init_method='env://',                                   
+        world_size=args.world_size,                              
+        rank=rank                                               
+    )
 
     # Set pytorch seed for random initial weights
-    torch.manual_seed(args.pytorch_seed)
+    set_all_seeds(args.pytorch_seed)
 
     # Split data
     debug(f'Splitting data with seed {args.seed}')
@@ -125,22 +145,27 @@ def run_training(args: TrainArgs,
         class_balance=args.class_balance,
         shuffle=True,
         seed=args.seed,
+        distributed=True,
+        knowledge_base=knowledge_base,
         args=args,
-        knowledge_base=knowledge_base
     )
+    
     val_data_loader = MoleculeDataLoader(
         dataset=val_data,
         batch_size=args.batch_size,
         num_workers=num_workers,
+        distributed=False,
+        knowledge_base=knowledge_base,
         args=args,
-        knowledge_base=knowledge_base
     )
+   
     test_data_loader = MoleculeDataLoader(
         dataset=test_data,
         batch_size=args.batch_size,
         num_workers=num_workers,
+        distributed=False,
+        knowledge_base=knowledge_base,
         args=args,
-        knowledge_base=knowledge_base
     )
 
     if args.class_balance:
@@ -151,35 +176,30 @@ def run_training(args: TrainArgs,
         # Tensorboard writer
         save_dir = os.path.join(args.save_dir, f'model_{model_idx}')
         makedirs(save_dir)
-        try:
-            writer = SummaryWriter(log_dir=save_dir)
-        except:
-            writer = SummaryWriter(logdir=save_dir)
+
+        writer = None
+        if rank == 0:
+            try:
+                writer = SummaryWriter(log_dir=save_dir)
+            except:
+                writer = SummaryWriter(logdir=save_dir)
 
         # Load/build model
         if args.checkpoint_paths is not None:
             debug(f'Loading model {model_idx} from {args.checkpoint_paths[model_idx]}')
-            model = load_checkpoint(args.checkpoint_paths[model_idx], logger=logger)
+            model = load_checkpoint(args.checkpoint_paths[model_idx], logger=logger, device=args.device)
         else:
             debug(f'Building model {model_idx}')
             model = KGModel(args) if args.knowledge_graph else MoleculeModel(args)
-        # Check GPU count and batch accordingly
-        if torch.cuda.device_count() > 1:
-            print("Using:", torch.cuda.device_count(), "GPUs")
-            args.device = torch.device('cuda:0')  # required by data parallel
-            # use parallel model if multiple gpus
-            model = nn.DataParallel(model)
 
         debug(model)
         debug(f'Number of parameters = {param_count(model):,}')
+
         if args.cuda:
             debug('Moving model to cuda')
-        else:
-            print('NO CUDA')
-        model = model.to(args.device)
+            model = model.to(args.device)
 
-        # Ensure that model is saved in correct location for evaluation if 0 epochs
-        save_checkpoint(os.path.join(save_dir, MODEL_FILE_NAME), model, scaler, features_scaler, args)
+        model = DDP(model, device_ids=[rank])
 
         # Optimizers
         optimizer = build_optimizer(model, args)
@@ -206,38 +226,53 @@ def run_training(args: TrainArgs,
             )
             if isinstance(scheduler, ExponentialLR):
                 scheduler.step()
-            val_scores = evaluate(
-                model=model,
-                data_loader=val_data_loader,
-                num_tasks=args.num_tasks,
-                metrics=args.metrics,
-                dataset_type=args.dataset_type,
-                scaler=scaler,
-                logger=logger
-            )
 
-            for metric, scores in val_scores.items():
-                # Average validation score
-                avg_val_score = np.nanmean(scores)
-                debug(f'Validation {metric} = {avg_val_score:.6f}')
-                writer.add_scalar(f'validation_{metric}', avg_val_score, n_iter)
+            if rank == 0:
+                # only one process will eval on val set
+                save_checkpoint(os.path.join(save_dir, "temp_model.pt"), model, scaler, features_scaler, args)
+                eval_model = load_checkpoint(rank, os.path.join(save_dir, "temp_model.pt"), args.device, logger)
+                
+                val_scores = evaluate(
+                    model=eval_model,
+                    data_loader=val_data_loader,
+                    num_tasks=args.num_tasks,
+                    metrics=args.metrics,
+                    dataset_type=args.dataset_type,
+                    scaler=scaler,
+                    logger=logger
+                )
 
-                if args.show_individual_scores:
-                    # Individual validation scores
-                    for task_name, val_score in zip(args.task_names, scores):
-                        debug(f'Validation {task_name} {metric} = {val_score:.6f}')
-                        writer.add_scalar(f'validation_{task_name}_{metric}', val_score, n_iter)
+                # Log validation metrics (move to wandb)
+                for metric, scores in val_scores.items():
+                    # Average validation score
+                    avg_val_score = np.nanmean(scores)
+                    debug(f'Validation {metric} = {avg_val_score:.6f}')
+                    writer.add_scalar(f'validation_{metric}', avg_val_score, n_iter)
 
-            # Save model checkpoint if improved validation score
-            avg_val_score = np.nanmean(val_scores[args.metric])
-            if args.minimize_score and avg_val_score < best_score or \
-                    not args.minimize_score and avg_val_score > best_score:
-                best_score, best_epoch = avg_val_score, epoch
-                save_checkpoint(os.path.join(save_dir, MODEL_FILE_NAME), model, scaler, features_scaler, args)
+                    if args.show_individual_scores:
+                        # Individual validation scores
+                        for task_name, val_score in zip(args.task_names, scores):
+                            debug(f'Validation {task_name} {metric} = {val_score:.6f}')
+                            writer.add_scalar(f'validation_{task_name}_{metric}', val_score, n_iter)
+                
+                # Save model checkpoint if improved validation score
+                avg_val_score = np.nanmean(val_scores[args.metric])
+                if args.minimize_score and avg_val_score < best_score or \
+                        not args.minimize_score and avg_val_score > best_score:
+                    best_score, best_epoch = avg_val_score, epoch
+                    save_checkpoint(os.path.join(save_dir, MODEL_FILE_NAME), eval_model, scaler, features_scaler, args)
+                
+        
 
+        # Test will be done on one GPU
+        # No processes can leave until all are done otherwise it can hang indefinitely
+        dist.barrier()        
+        if rank != 0:
+            return {}
+        
         # Evaluate on test set using model with best validation score
         info(f'Model {model_idx} best validation {args.metric} = {best_score:.6f} on epoch {best_epoch}')
-        model = load_checkpoint(os.path.join(save_dir, MODEL_FILE_NAME), device=args.device, logger=logger)
+        model = load_checkpoint(args.rank, os.path.join(save_dir, MODEL_FILE_NAME), device=args.device, logger=logger)
 
         test_preds = predict(
             model=model,
@@ -256,6 +291,7 @@ def run_training(args: TrainArgs,
         if len(test_preds) != 0:
             sum_test_preds += np.array(test_preds)
 
+        # Final test metrics --> move to wandb
         # Average test score
         for metric, scores in test_scores.items():
             avg_test_score = np.nanmean(scores)
@@ -267,7 +303,9 @@ def run_training(args: TrainArgs,
                 for task_name, test_score in zip(args.task_names, scores):
                     info(f'Model {model_idx} test {task_name} {metric} = {test_score:.6f}')
                     writer.add_scalar(f'test_{task_name}_{metric}', test_score, n_iter)
-        writer.close()
+
+        if writer:
+            writer.close()
 
     # Evaluate ensemble on test set
     avg_test_preds = (sum_test_preds / args.ensemble_size).tolist()

@@ -1,5 +1,8 @@
-from argparse import Namespace
+import pdb
+import random
+import sys
 import csv
+from argparse import Namespace
 from datetime import timedelta
 from functools import wraps
 import logging
@@ -8,6 +11,8 @@ import os
 import pickle
 from time import time
 from typing import Any, Callable, List, Tuple, Union
+import numpy as np
+from collections import OrderedDict
 
 from sklearn.metrics import auc, mean_absolute_error, mean_squared_error, precision_recall_curve, r2_score,\
     roc_auc_score, accuracy_score, log_loss
@@ -15,6 +20,7 @@ import torch
 import torch.nn as nn
 from torch.optim import Adam, Optimizer
 from torch.optim.lr_scheduler import _LRScheduler
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 from chemprop.args import TrainArgs
 from chemprop.data import StandardScaler, MoleculeDataset
@@ -55,6 +61,10 @@ def save_checkpoint(path: str,
     # Convert args to namespace for backwards compatibility
     if args is not None:
         args = Namespace(**args.as_dict())
+    
+    # for parallel models, key starts with "module"
+    if hasattr(model, 'module'):
+        model = model.module
 
     state = {
         'args': args,
@@ -68,10 +78,12 @@ def save_checkpoint(path: str,
             'stds': features_scaler.stds
         } if features_scaler is not None else None
     }
+
     torch.save(state, path)
 
 
-def load_checkpoint(path: str,
+def load_checkpoint(rank: int,
+                    path: str,
                     device: torch.device = None,
                     logger: logging.Logger = None) -> MoleculeModel:
     """
@@ -88,7 +100,8 @@ def load_checkpoint(path: str,
         debug = info = print
 
     # Load model and args
-    state = torch.load(path, map_location=lambda storage, loc: storage)
+    map_location = {f'cuda:0' : f'cuda:{rank}'}  # saved in GPU 0. Map location to current GPU
+    state = torch.load(path, map_location=map_location)
     args = TrainArgs()
     args.from_dict(vars(state['args']), skip_unsettable=True)
     loaded_state_dict = state['state_dict']
@@ -96,20 +109,12 @@ def load_checkpoint(path: str,
     if device is not None:
         args.device = device
 
-    # Build model TODO: abstract away model creation
     model = KGModel(args) if args.knowledge_graph else MoleculeModel(args)
-    if torch.cuda.device_count() > 1:
-        model = nn.DataParallel(model)
-
-        # 0 device is default master node in DataParallel
-        assert args.device == torch.device('cuda:0')
-
     model_state_dict = model.state_dict()
 
     # Skip missing parameters and parameters of mismatched size
     pretrained_state_dict = {}
     for param_name in loaded_state_dict.keys():
-
         if param_name not in model_state_dict:
             info(f'Warning: Pretrained parameter "{param_name}" cannot be found in model parameters.')
         elif model_state_dict[param_name].shape != loaded_state_dict[param_name].shape:
@@ -126,8 +131,8 @@ def load_checkpoint(path: str,
 
     if args.cuda:
         debug('Moving model to cuda')
-    model = model.to(args.device)
-
+        model = model.to(args.device)
+    
     return model
 
 
@@ -457,3 +462,31 @@ def save_smiles_splits(data_path: str,
 
     with open(os.path.join(save_dir, 'split_indices.pckl'), 'wb') as f:
         pickle.dump(all_split_indices, f)
+
+
+def set_all_seeds(seed):
+    # application side randomness
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+
+    # implementation of a CUDA algorithm may have randomness, shuts this off.
+    # torch.set_deterministic(True)  Pytorch 1.7
+
+    # no algorithm selection (CUDA usually may select different algos on different runs)
+    torch.backends.cudnn.benchmark = False
+
+
+class ForkedPdb(pdb.Pdb):
+    """A Pdb subclass that may be used
+    from a forked multiprocessing child
+
+    """
+    def interaction(self, *args, **kwargs):
+        _stdin = sys.stdin
+        try:
+            sys.stdin = open('/dev/stdin')
+            pdb.Pdb.interaction(self, *args, **kwargs)
+        finally:
+            sys.stdin = _stdin
