@@ -18,7 +18,7 @@ from torch.optim.lr_scheduler import _LRScheduler
 
 from chemprop.args import TrainArgs
 from chemprop.data import StandardScaler, MoleculeDataset
-from chemprop.models import MoleculeModel
+from chemprop.models import KGModel, MoleculeModel
 from chemprop.nn_utils import NoamLR
 
 
@@ -96,8 +96,14 @@ def load_checkpoint(path: str,
     if device is not None:
         args.device = device
 
-    # Build model
-    model = MoleculeModel(args)
+    # Build model TODO: abstract away model creation
+    model = KGModel(args) if args.knowledge_graph else MoleculeModel(args)
+    if torch.cuda.device_count() > 1:
+        model = nn.DataParallel(model)
+
+        # 0 device is default master node in DataParallel
+        assert args.device == torch.device('cuda:0')
+
     model_state_dict = model.state_dict()
 
     # Skip missing parameters and parameters of mismatched size

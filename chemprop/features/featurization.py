@@ -132,10 +132,14 @@ class MolGraph:
     * :code:`b2revb`: A mapping from a bond index to the index of the reverse bond.
     """
 
-    def __init__(self, mol: Union[str, Chem.Mol], atom_descriptors: np.ndarray = None):
+    def __init__(self, mol: Union[str, Chem.Mol], atom_descriptors: np.ndarray = None, include_nodes: List[int] = None):
         """
-        :param mol: A SMILES or an RDKit molecule.
-        """
+        Computes the graph structure and featurization of a molecule.
+
+        :param mol: A SMILES string or an RDKit molecule.
+        :param include_nodes: MolGraph will only contain nodes and edges of the subgraph induced
+                              by the node indices in include_nodes. If None, uses full graph.
+       """
         # Convert SMILES to RDKit molecule if necessary
         if type(mol) == str:
             mol = Chem.MolFromSmiles(mol)
@@ -148,10 +152,22 @@ class MolGraph:
         self.b2a = []  # mapping from bond index to the index of the atom the bond is coming from
         self.b2revb = []  # mapping from bond index to the index of the reverse bond
 
+        # If include_nodes is not specified, include all nodes
+        if include_nodes is None:
+            include_nodes = list(range(mol.GetNumAtoms()))
+
         # Get atom features
-        self.f_atoms = [atom_features(atom) for atom in mol.GetAtoms()]
-        if atom_descriptors is not None:
-            self.f_atoms = [f_atoms + descs.tolist() for f_atoms, descs in zip(self.f_atoms, atom_descriptors)]
+        node_to_atom = {}
+        for i, atom in enumerate(mol.GetAtoms()):
+            if i in include_nodes:
+                node_to_atom[len(self.f_atoms)] = i
+                f_atom = atom_features(atom)
+                
+                if atom_descriptors is not None:
+                    f_atom.extend(descs[i].tolist())
+
+                self.f_atoms.append(f_atom)
+                
 
         self.n_atoms = len(self.f_atoms)
 
@@ -162,7 +178,7 @@ class MolGraph:
         # Get bond features
         for a1 in range(self.n_atoms):
             for a2 in range(a1 + 1, self.n_atoms):
-                bond = mol.GetBondBetweenAtoms(a1, a2)
+                bond = mol.GetBondBetweenAtoms(node_to_atom[a1], node_to_atom[a2])
 
                 if bond is None:
                     continue
@@ -188,7 +204,9 @@ class BatchMolGraph:
     A :class:`BatchMolGraph` represents the graph structure and featurization of a batch of molecules.
 
     A BatchMolGraph contains the attributes of a :class:`MolGraph` plus:
-
+    
+    * :code:`subgraph_scope`: When using knowledge graphs, this is a mapping from molecule index to subgraph indices
+                              in the BatchMolGraph in order to reconstruct each molecule from its subgraphs.
     * :code:`atom_fdim`: The dimensionality of the atom feature vector.
     * :code:`bond_fdim`: The dimensionality of the bond feature vector (technically the combined atom/bond features).
     * :code:`a_scope`: A list of tuples indicating the start and end atom indices for each molecule.
@@ -198,10 +216,11 @@ class BatchMolGraph:
     * :code:`a2a`: (Optional): A mapping from an atom index to neighboring atom indices.
     """
 
-    def __init__(self, mol_graphs: List[MolGraph]):
+    def __init__(self, mol_graphs: List[MolGraph], subgraph_scope: List[List[int]] = None):
         r"""
         :param mol_graphs: A list of :class:`MolGraph`\ s from which to construct the :class:`BatchMolGraph`.
         """
+        self.subgraph_scope = subgraph_scope
         self.atom_fdim = get_atom_fdim()
         self.bond_fdim = get_bond_fdim()
 
@@ -299,6 +318,67 @@ class BatchMolGraph:
             self.a2a = self.b2a[self.a2b]  # num_atoms x max_num_bonds
 
         return self.a2a
+
+    def connect_subgraphs(self, f_subgraphs: torch.FloatTensor) -> None:
+        """Builds fully connected graphs of molecular subgraphs.
+
+        :param f_subgraphs: Encodings of the subgraphs.
+        """
+        if self.subgraph_scope is None:
+            raise ValueError('Cannot connect subgraphs when subgraph_scope is None.')
+
+        device = f_subgraphs.device
+        a2b = [[] for _ in range(len(f_subgraphs) + 1)]
+        b2a = [0]
+        b2revb = [0]
+        self.n_atoms = 1
+        self.n_bonds = 1
+        self.a_scope = []
+        self.b_scope = []
+
+        b1 = 1
+        for subgraph_indices in self.subgraph_scope:
+            n_atoms = n_bonds = 0
+
+            for i, subgraph_index_1 in enumerate(subgraph_indices):
+                n_atoms += 1
+
+                for subgraph_index_2 in subgraph_indices[i + 1:]:
+                    a1 = subgraph_index_1 + 1
+                    a2 = subgraph_index_2 + 1
+                    b2 = b1 + 1
+
+                    a2b[a2].append(b1)
+                    b2a.append(a1)
+                    a2b[a1].append(b2)
+                    b2a.append(a2)
+                    b2revb.append(b2)
+                    b2revb.append(b1)
+
+                    b1 += 2
+                    n_bonds += 2
+
+            self.a_scope.append((self.n_atoms, n_atoms))
+            self.b_scope.append((self.n_bonds, n_bonds))
+            self.n_atoms += n_atoms
+            self.n_bonds += n_bonds
+
+        self.max_num_bonds = max(1, max(len(in_bonds) for in_bonds in a2b))
+
+        self.n_atoms = len(a2b)
+        self.n_bonds = len(b2a)
+        self.f_atoms = torch.cat([torch.zeros(1, f_subgraphs.shape[1], device=device), f_subgraphs])
+        self.f_bonds = torch.zeros(self.n_bonds, 1, device=device)
+
+        assert len(self.f_atoms) == self.n_atoms
+        assert len(self.f_bonds) == self.n_bonds
+
+        self.a2b = torch.tensor([a2b[a] + [0] * (self.max_num_bonds - len(a2b[a])) for a in range(self.n_atoms)],
+                                device=device)
+        self.b2a = torch.tensor(b2a, device=device)
+        self.b2revb = torch.tensor(b2revb, device=device)
+        self.b2b = None
+        self.a2a = None
 
 
 def mol2graph(mols: Union[List[str], List[Chem.Mol]], atom_descriptors_batch: List[np.array] = None) -> BatchMolGraph:

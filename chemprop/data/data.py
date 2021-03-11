@@ -1,15 +1,20 @@
+import math
+import torch
 import threading
+from functools import partial
 from collections import OrderedDict
 from random import Random
 from typing import Dict, Iterator, List, Optional, Union
 
 import numpy as np
-from torch.utils.data import DataLoader, Dataset, Sampler
 from rdkit import Chem
+from torch.utils.data import DataLoader, Dataset, Sampler
 
 from .scaler import StandardScaler
+from chemprop.args import TrainArgs
 from chemprop.features import get_features_generator
 from chemprop.features import BatchMolGraph, MolGraph
+from kg_chem import KnowledgeBase, get_unique_subgraphs
 
 
 # Cache of graph featurizations
@@ -167,7 +172,7 @@ class MoleculeDataset(Dataset):
         """
         return [d.mol for d in self._data]
 
-    def batch_graph(self) -> BatchMolGraph:
+    def batch_graph(self, args: TrainArgs = None, knowledge_base: KnowledgeBase = None) -> BatchMolGraph:
         r"""
         Constructs a :class:`~chemprop.features.BatchMolGraph` with the graph featurization of all the molecules.
 
@@ -177,20 +182,38 @@ class MoleculeDataset(Dataset):
            set of :class:`MoleculeDatapoint`\ s changes, then the returned :class:`~chemprop.features.BatchMolGraph`
            will be incorrect for the underlying data.
 
+        :param knowledge_base: A knowledge base used to lookup subgraphs for knowledge graph models
         :return: A :class:`~chemprop.features.BatchMolGraph` containing the graph featurization of all the molecules.
         """
-        if self._batch_graph is None:
-            mol_graphs = []
-            for d in self._data:
-                if d.smiles in SMILES_TO_GRAPH:
-                    mol_graph = SMILES_TO_GRAPH[d.smiles]
-                else:
-                    mol_graph = MolGraph(d.mol, d.atom_features)
-                    if cache_graph():
-                        SMILES_TO_GRAPH[d.smiles] = mol_graph
-                mol_graphs.append(mol_graph)
+        if args is not None:
+            knowledge_graph, subgraph_size = args.knowledge_graph, args.subgraph_size
+        else:
+            knowledge_graph = False
+            subgraph_size = 0
 
-            self._batch_graph = BatchMolGraph(mol_graphs)
+        if self._batch_graph is None:
+            mol_graphs = None
+            subgraph_scope = None  # maps from molecule index to indices in mol_graphs
+            
+            if knowledge_graph:
+                # subgraph scope maps from molecule index to indices in unique_subgraphs 
+                all_smiles = [d.smiles for d in self._data]
+                unique_subgraphs, subgraph_scope = (knowledge_base.get_subgraphs(all_smiles) 
+                                                    if knowledge_base 
+                                                    else get_unique_subgraphs(all_smiles, subgraph_size))
+                
+                mol_graphs = [MolGraph(subgraph) for subgraph in unique_subgraphs]
+            else: 
+                for d in self._data:
+                    if d.smiles in SMILES_TO_GRAPH:
+                        mol_graph = SMILES_TO_GRAPH[d.smiles]
+                    else:
+                        mol_graph = MolGraph(d.mol, d.atom_features)
+                        if cache_graph():
+                            SMILES_TO_GRAPH[d.smiles] = mol_graph
+                    mol_graphs.append(mol_graph)
+
+            self._batch_graph = BatchMolGraph(mol_graphs, subgraph_scope=subgraph_scope)
 
         return self._batch_graph
 
@@ -404,22 +427,6 @@ class MoleculeSampler(Sampler):
         return self.length
 
 
-def construct_molecule_batch(data: List[MoleculeDatapoint]) -> MoleculeDataset:
-    r"""
-    Constructs a :class:`MoleculeDataset` from a list of :class:`MoleculeDatapoint`\ s.
-
-    Additionally, precomputes the :class:`~chemprop.features.BatchMolGraph` for the constructed
-    :class:`MoleculeDataset`.
-
-    :param data: A list of :class:`MoleculeDatapoint`\ s.
-    :return: A :class:`MoleculeDataset` containing all the :class:`MoleculeDatapoint`\ s.
-    """
-    data = MoleculeDataset(data)
-    data.batch_graph()  # Forces computation and caching of the BatchMolGraph for the molecules
-
-    return data
-
-
 class MoleculeDataLoader(DataLoader):
     """A :class:`MoleculeDataLoader` is a PyTorch :class:`DataLoader` for loading a :class:`MoleculeDataset`."""
 
@@ -429,7 +436,9 @@ class MoleculeDataLoader(DataLoader):
                  num_workers: int = 8,
                  class_balance: bool = False,
                  shuffle: bool = False,
-                 seed: int = 0):
+                 seed: int = 0,
+                 args: TrainArgs = None,
+                 knowledge_base: KnowledgeBase = None):
         """
         :param dataset: The :class:`MoleculeDataset` containing the molecules to load.
         :param batch_size: Batch size.
@@ -440,6 +449,8 @@ class MoleculeDataLoader(DataLoader):
                               subset of the larger class.
         :param shuffle: Whether to shuffle the data.
         :param seed: Random seed. Only needed if shuffle is True.
+        :param args: Arguments.
+        :param knowledge_base: A knowledge base used to lookup subgraphs for knowledge graph models
         """
         self._dataset = dataset
         self._batch_size = batch_size
@@ -449,6 +460,8 @@ class MoleculeDataLoader(DataLoader):
         self._seed = seed
         self._context = None
         self._timeout = 0
+        self._args = args
+        self._knowledge_base = knowledge_base
         is_main_thread = threading.current_thread() is threading.main_thread()
         if not is_main_thread and self._num_workers > 0:
             self._context = 'forkserver'  # In order to prevent a hanging
@@ -461,6 +474,31 @@ class MoleculeDataLoader(DataLoader):
             seed=self._seed
         )
 
+        def construct_molecule_batch(data: List[MoleculeDatapoint]) -> MoleculeDataset:
+            r"""
+            Constructs a :class:`MoleculeDataset` from a list of :class:`MoleculeDatapoint`\ s.
+
+            Additionally, precomputes the :class:`~chemprop.features.BatchMolGraph` for the constructed
+            :class:`MoleculeDataset`.
+
+            :param data: A list of :class:`MoleculeDatapoint`\ s.
+            :return: A :class:`MoleculeDataset` containing all the :class:`MoleculeDatapoint`\ s.
+            """
+            def split(a, n):
+                k, m = divmod(len(a), n)
+                return (a[i * k + min(i, m):(i + 1) * k + min(i + 1, m)] 
+                        for i in range(n))
+
+            batch_size = math.ceil(len(data) / torch.cuda.device_count())
+            batches = [data[i:i+batch_size] for i in range(0, len(data), batch_size)] 
+            batches = [MoleculeDataset(data) for data in batches]
+
+            # Forces computation and caching of the BatchMolGraph for the molecules
+            for data in batches:
+                data.batch_graph(self._args, self._knowledge_base)  
+
+            return batches
+        
         super(MoleculeDataLoader, self).__init__(
             dataset=self._dataset,
             batch_size=self._batch_size,

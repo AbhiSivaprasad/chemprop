@@ -49,6 +49,7 @@ class MPNEncoder(nn.Module):
 
         # Input
         input_dim = self.atom_fdim if self.atom_messages else self.bond_fdim
+
         self.W_i = nn.Linear(input_dim, self.hidden_size, bias=self.bias)
 
         if self.atom_messages:
@@ -80,6 +81,8 @@ class MPNEncoder(nn.Module):
         :param atom_descriptors_batch: A list of numpy arrays containing additional atomic descriptors
         :return: A PyTorch tensor of shape :code:`(num_molecules, hidden_size)` containing the encoding of each molecule.
         """
+        # device not known ahead of time with multi-GPU
+        self.device = self.W_i.weight.device
         if self.use_input_features:
             features_batch = torch.from_numpy(np.stack(features_batch)).float().to(self.device)
 
@@ -154,7 +157,7 @@ class MPNEncoder(nn.Module):
                     mol_vec = mol_vec.sum(dim=0) / self.aggregation_norm
                 mol_vecs.append(mol_vec)
 
-        mol_vecs = torch.stack(mol_vecs, dim=0)  # (num_molecules, hidden_size)
+        mol_vecs = torch.stack(mol_vecs, dim=0) #, device=self.device)  # (num_molecules, hidden_size)
         
         if self.use_input_features:
             features_batch = features_batch.to(mol_vecs)
@@ -185,8 +188,7 @@ class MPN(nn.Module):
 
         self.encoder = MPNEncoder(args, self.atom_fdim, self.bond_fdim)
 
-    def forward(self,
-                batch: Union[List[str], List[Chem.Mol], BatchMolGraph],
+    def forward(self, batch: Union[List[str], List[Chem.Mol], BatchMolGraph],
                 features_batch: List[np.ndarray] = None,
                 atom_descriptors_batch: List[np.ndarray] = None) -> torch.FloatTensor:
         """

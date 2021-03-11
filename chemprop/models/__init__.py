@@ -1,4 +1,4 @@
-from .model import MoleculeModel
+from .model import MoleculeModel, KGModel
 from .mpn import MPN, MPNEncoder
 
 __all__ = [

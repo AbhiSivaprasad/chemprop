@@ -8,7 +8,7 @@ from typing_extensions import Literal
 import torch
 from tap import Tap  # pip install typed-argument-parser (https://github.com/swansonk14/typed-argument-parser)
 
-from chemprop.data import set_cache_mol
+import chemprop.data
 from chemprop.features import get_available_features_generators
 
 
@@ -168,7 +168,7 @@ class CommonArgs(Tap):
         if self.atom_descriptors is not None and self.atom_descriptors_path is None:
             raise ValueError('When using atom_descriptors, --atom_descriptors_path must be specified')
 
-        set_cache_mol(not self.no_cache_mol)
+        chemprop.data.set_cache_mol(not self.no_cache_mol)
 
 
 class TrainArgs(CommonArgs):
@@ -280,6 +280,26 @@ class TrainArgs(CommonArgs):
     """Aggregation scheme for atomic vectors into molecular vectors"""
     aggregation_norm: int = 100
     """For norm aggregation, number by which to divide summed up atomic features"""
+    knowledge_base_path: str = None 
+    """Path to pickled Knowledge Base"""
+    knowledge_graph: bool = False  
+    """Whether to create a knowledge graph model"""
+    subgraph_size: int = 8
+    """Size of subgraphs to extract when knowledge_graph is True"""
+    transformer_num_encoder_layers:int = 3
+    """Number of layers for transformer encoder of subgraph embeddings"""
+    kg_molecule_model:str = 'transformer'
+    """What model to use to process subgraph embeddings into molecule embedding. Options: 'transformer'|'deepset'"""
+    transformer_num_heads:int = 8
+    """Number of heads for transformer encoder of subgraph embeddings"""
+    kg_molecule_model_dropout:float = 0.2
+    """Dropout for encoder of subgraph embeddings"""
+    transformer_feature_dim:int = 512
+    """Dimension for transformer input vectors"""
+    deepset_num_layers:int = 3
+    """Number of layers in Phi function for Deepset"""
+    model_name:str = 'chemprop'
+    """Name of model for logging"""
 
     # Training arguments
     epochs: int = 30
@@ -438,7 +458,7 @@ class TrainArgs(CommonArgs):
                 self._crossval_index_sets = pickle.load(rf)
             self.num_folds = len(self.crossval_index_sets)
             self.seed = 0
-
+        
         # Test settings
         if self.test:
             self.epochs = 0

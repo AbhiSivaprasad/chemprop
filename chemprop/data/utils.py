@@ -14,6 +14,7 @@ from .data import MoleculeDatapoint, MoleculeDataset
 from .scaffold import log_scaffold_stats, scaffold_split
 from chemprop.args import PredictArgs, TrainArgs
 from chemprop.features import load_features, load_atom_features
+from kg_chem import KnowledgeBase
 
 
 def get_task_names(path: str,

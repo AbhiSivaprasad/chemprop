@@ -1,3 +1,4 @@
+import datetime
 from collections import defaultdict
 import csv
 from logging import Logger
@@ -15,6 +16,7 @@ from chemprop.data import get_data, get_task_names, MoleculeDataset, validate_da
 from chemprop.utils import create_logger, makedirs, timeit
 from chemprop.features import set_extra_atom_fdim
 
+from kg_chem import KnowledgeBase
 
 @timeit(logger_name=TRAIN_LOGGER_NAME)
 def cross_validate(args: TrainArgs,
@@ -31,11 +33,14 @@ def cross_validate(args: TrainArgs,
     :param train_func: Function which runs training.
     :return: A tuple containing the mean and standard deviation performance across folds.
     """
+    # save_dir needs to be indexed by model name and time
+    args.save_dir = os.path.join(args.save_dir, args.model_name, datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
     logger = create_logger(name=TRAIN_LOGGER_NAME, save_dir=args.save_dir, quiet=args.quiet)
     if logger is not None:
         debug, info = logger.debug, logger.info
     else:
         debug = info = print
+    info(f"Save dir: {args.save_dir}")
 
     # Initialize relevant variables
     init_seed = args.seed
@@ -67,7 +72,7 @@ def cross_validate(args: TrainArgs,
         logger=logger,
         skip_none_targets=True
     )
-    validate_dataset_type(data, dataset_type=args.dataset_type)
+    validate_dataset_type(data, dataset_type=args.dataset_type) # validate classification/regression
     args.features_size = data.features_size()
 
     if args.atom_descriptors == 'descriptor':
@@ -79,6 +84,11 @@ def cross_validate(args: TrainArgs,
 
     debug(f'Number of tasks = {args.num_tasks}')
 
+    knowledge_base = None
+    if args.knowledge_base_path:
+        # load knowledge base
+        knowledge_base = KnowledgeBase().load(args.knowledge_base_path)  
+
     # Run training on different random seeds for each fold
     all_scores = defaultdict(list)
     for fold_num in range(args.num_folds):
@@ -87,15 +97,15 @@ def cross_validate(args: TrainArgs,
         args.save_dir = os.path.join(save_dir, f'fold_{fold_num}')
         makedirs(args.save_dir)
         data.reset_features_and_targets()
-        model_scores = train_func(args, data, logger)
+        model_scores = train_func(args, data, knowledge_base, logger)
         for metric, scores in model_scores.items():
             all_scores[metric].append(scores)
     all_scores = dict(all_scores)
-
+    
     # Convert scores to numpy arrays
     for metric, scores in all_scores.items():
         all_scores[metric] = np.array(scores)
-
+    
     # Report results
     info(f'{args.num_folds}-fold cross validation')
 
