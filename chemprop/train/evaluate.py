@@ -1,8 +1,8 @@
-from collections import defaultdict
-import logging
-from typing import Dict, List
-
 import wandb
+import logging
+
+from collections import defaultdict
+from typing import Dict, List
 
 from .predict import predict
 from chemprop.data import MoleculeDataLoader, StandardScaler

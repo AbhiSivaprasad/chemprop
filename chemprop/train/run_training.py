@@ -1,13 +1,14 @@
-import datetime
-from logging import Logger
 import os
-from typing import Dict, List
-
 import wandb
+import torch
+import datetime
 import numpy as np
 import pandas as pd
+import torch.nn as nn
+
+from logging import Logger
+from typing import Dict, List
 from tensorboardX import SummaryWriter
-import torch
 from tqdm import trange
 from torch.optim.lr_scheduler import ExponentialLR
 
@@ -21,10 +22,8 @@ from chemprop.data import get_class_sizes, get_data, MoleculeDataLoader, Molecul
 from chemprop.nn_utils import param_count
 from chemprop.utils import build_optimizer, build_lr_scheduler, get_loss_func, load_checkpoint,makedirs, \
     save_checkpoint, save_smiles_splits
-import torch.nn as nn
 from kg_chem import KnowledgeBase
 
-WANDB_API_KEY="API KEY GOES HERE"
 
 def run_training(args: TrainArgs,
                  data: MoleculeDataset,
@@ -164,7 +163,13 @@ def run_training(args: TrainArgs,
             model = load_checkpoint(args.checkpoint_paths[model_idx], logger=logger)
         else:
             debug(f'Building model {model_idx}')
-            model = KGModel(args) if args.knowledge_graph else MoleculeModel(args)
+            if args.model_type == 'chemprop':
+                model = MoleculeModel(args)
+            elif args.model_type == 'knowledge_graph'
+                model = KGModel(args)
+            else:
+                raise ValueError(f"Model type {args.model_type} not supported")
+
         # Check GPU count and batch accordingly
         if torch.cuda.device_count() > 1:
             print("Using:", torch.cuda.device_count(), "GPUs")
@@ -180,20 +185,12 @@ def run_training(args: TrainArgs,
             print('NO CUDA')
         model = model.to(args.device)
 
+        # use all args as hyperparams
+        hyperparams = Namespace(**args.as_dict())
 
-        hyperparams = dict(
-            seed = args.seed,
-            pytorch_seed = args.pytorch_seed,
-            epochs = args.epochs,
-            warmup_epochs = args.warmup_epochs,
-            init_lr = args.init_lr,
-            max_lr = args.max_lr,
-            final_lr = args.final_lr,
-            grad_clip = args.grad_clip,
-            class_balance = args.class_balance
-        )
-        if logger == "wandb":
-            wandb.init(project=f"chemprop-{model_idx}", config=hyperparams)
+        # intialize wandb run
+        if args.wandb:
+            wandb.init(project=args.wandb_project, config=hyperparams)
 
         # Ensure that model is saved in correct location for evaluation if 0 epochs
         save_checkpoint(os.path.join(save_dir, MODEL_FILE_NAME), model, scaler, features_scaler, args)
@@ -284,13 +281,20 @@ def run_training(args: TrainArgs,
         for metric, scores in test_scores.items():
             avg_test_score = np.nanmean(scores)
             info(f'Model {model_idx} test {metric} = {avg_test_score:.6f}')
+
             writer.add_scalar(f'test_{metric}', avg_test_score, 0)
+            if args.wandb:
+                wandb.log({f"test_{metric}": avg_test_score})
 
             if args.show_individual_scores:
                 # Individual test scores
                 for task_name, test_score in zip(args.task_names, scores):
                     info(f'Model {model_idx} test {task_name} {metric} = {test_score:.6f}')
                     writer.add_scalar(f'test_{task_name}_{metric}', test_score, n_iter)
+
+                    if args.wandb:
+                        wandb.log({f"test_{task_name}_{metric}": test_score})
+                
         writer.close()
 
     # Evaluate ensemble on test set

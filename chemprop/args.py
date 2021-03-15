@@ -282,8 +282,6 @@ class TrainArgs(CommonArgs):
     """For norm aggregation, number by which to divide summed up atomic features"""
     knowledge_base_path: str = None 
     """Path to pickled Knowledge Base"""
-    knowledge_graph: bool = False  
-    """Whether to create a knowledge graph model"""
     subgraph_size: int = 8
     """Size of subgraphs to extract when knowledge_graph is True"""
     transformer_num_encoder_layers:int = 3
@@ -298,8 +296,8 @@ class TrainArgs(CommonArgs):
     """Dimension for transformer input vectors"""
     deepset_num_layers:int = 3
     """Number of layers in Phi function for Deepset"""
-    model_name:str = 'chemprop'
-    """Name of model for logging"""
+    model_type:Literal['chemprop', 'knowledge_graph'] = 'chemprop'
+    """Which type of model to run"""
 
     # Training arguments
     epochs: int = 30
@@ -319,6 +317,15 @@ class TrainArgs(CommonArgs):
     """Maximum magnitude of gradient during training."""
     class_balance: bool = False
     """Trains with an equal number of positives and negatives in each batch."""
+
+    # wandb arguments
+    wandb: bool = False
+    """If True log to wandb"""
+    wandb_project: str = "kg-chem"
+    """Name of wandb project to log to"""
+    wandb_gradient_log_frequency: int = 1000
+    """Frequency in steps to log gradients to wandb"""
+
 
     def __init__(self, *args, **kwargs) -> None:
         super(TrainArgs, self).__init__(*args, **kwargs)

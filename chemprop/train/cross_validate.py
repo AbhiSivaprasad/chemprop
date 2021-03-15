@@ -1,13 +1,15 @@
 import datetime
-from collections import defaultdict
 import csv
-from logging import Logger
 import os
 import sys
-from typing import Callable, Dict, List, Tuple
-
+import wandb
 import numpy as np
 import pandas as pd
+
+from collections import defaultdict
+from logging import Logger
+from typing import Callable, Dict, List, Tuple
+from kg_chem import KnowledgeBase
 
 from .run_training import run_training
 from chemprop.args import TrainArgs
@@ -15,8 +17,6 @@ from chemprop.constants import TEST_SCORES_FILE_NAME, TRAIN_LOGGER_NAME
 from chemprop.data import get_data, get_task_names, MoleculeDataset, validate_dataset_type
 from chemprop.utils import create_logger, makedirs, timeit
 from chemprop.features import set_extra_atom_fdim
-
-from kg_chem import KnowledgeBase
 
 @timeit(logger_name=TRAIN_LOGGER_NAME)
 def cross_validate(args: TrainArgs,
@@ -34,7 +34,9 @@ def cross_validate(args: TrainArgs,
     :return: A tuple containing the mean and standard deviation performance across folds.
     """
     # save_dir needs to be indexed by model name and time
-    args.save_dir = os.path.join(args.save_dir, args.model_name, datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+    args.save_dir = (wandb.run.dir 
+                     if args.wandb
+                     else os.path.join(args.save_dir, args.model_name, datetime.datetime.now().strftime("%Y%m%d-%H%M%S")))
     logger = create_logger(name=TRAIN_LOGGER_NAME, save_dir=args.save_dir, quiet=args.quiet)
     if logger is not None:
         debug, info = logger.debug, logger.info

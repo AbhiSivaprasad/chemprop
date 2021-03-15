@@ -68,6 +68,7 @@ def save_checkpoint(path: str,
             'stds': features_scaler.stds
         } if features_scaler is not None else None
     }
+
     torch.save(state, path)
 
 
@@ -97,7 +98,13 @@ def load_checkpoint(path: str,
         args.device = device
 
     # Build model TODO: abstract away model creation
-    model = KGModel(args) if args.knowledge_graph else MoleculeModel(args)
+    if args.model_type == 'chemprop':
+        model = MoleculeModel(args)
+    elif args.model_type == 'knowledge_graph'
+        model = KGModel(args)
+    else:
+        raise ValueError(f"Model type {args.model_type} not supported")
+
     if torch.cuda.device_count() > 1:
         model = nn.DataParallel(model)
 

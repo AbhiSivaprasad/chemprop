@@ -1,13 +1,13 @@
-import logging
-from typing import Callable
-
-from tensorboardX import SummaryWriter
+import wandb
 import torch
 import torch.nn as nn
+import logging
+
+from typing import Callable
+from tensorboardX import SummaryWriter
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler
 from tqdm import tqdm
-import wandb
 
 from chemprop.args import TrainArgs
 from chemprop.data import MoleculeDataLoader, MoleculeDataset
@@ -44,7 +44,7 @@ def train(model: MoleculeModel,
     loss_sum = iter_count = 0
     acc_sum = 0
 
-    wandb.watch(model, loss, log="all", log_freq=args.log_frequency)
+    wandb.watch(model, loss, log="all", log_freq=args.wandb_gradient_log_frequency)
     
     for batches in tqdm(data_loader, total=len(data_loader), leave=False):
         # Prepare batch
@@ -99,19 +99,25 @@ def train(model: MoleculeModel,
 
         n_iter += batch_size
 
+        # Logging
+        lrs = scheduler.get_lr()
+        pnorm = compute_pnorm(model)
+        gnorm = compute_gnorm(model)
+        loss_avg = loss_sum / iter_count
+        acc_avg = acc_sum / iter_count
+        acc_sum = loss_sum = iter_count = 0
+        lrs_str = ', '.join(f'lr_{i} = {lr:.4e}' for i, lr in enumerate(lrs))
+
+        # Log to wandb after every batch
+        if args.wandb:
+            log = {"train_loss": loss.item(), "avg_train_loss": loss_avg, "param norm": pnorm, "gradient_norm": gnorm}
+            for i, lr in enumerate(lrs):
+                log[f"learning_rate_{i}"] = lr
+            wandb.log(log)
+
         # Log and/or add to tensorboard
         if (n_iter // args.batch_size) % args.log_frequency == 0:
-            lrs = scheduler.get_lr()
-            pnorm = compute_pnorm(model)
-            gnorm = compute_gnorm(model)
-            loss_avg = loss_sum / iter_count
-            acc_avg = acc_sum / iter_count
-            acc_sum = loss_sum = iter_count = 0
-
-            lrs_str = ', '.join(f'lr_{i} = {lr:.4e}' for i, lr in enumerate(lrs))
             debug(f'Loss = {loss_avg:.4e}, PNorm = {pnorm:.4f}, GNorm = {gnorm:.4f}, {lrs_str}')
-            if logger == "wandb":
-                wandb.log({"train_loss": loss_avg, "param norm": pnorm, "gradient_norm": gnorm}, step=n_iter)
 
             if writer is not None:
                 writer.add_scalar('train_acc', acc_avg, n_iter)
