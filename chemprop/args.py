@@ -4,6 +4,7 @@ from tempfile import TemporaryDirectory
 import pickle
 from typing import List, Optional, Tuple
 from typing_extensions import Literal
+from time import time
 
 import torch
 from tap import Tap  # pip install typed-argument-parser (https://github.com/swansonk14/typed-argument-parser)
@@ -339,6 +340,8 @@ class TrainArgs(CommonArgs):
     """Name of wandb project to log to"""
     wandb_gradient_log_frequency: int = 1000
     """Frequency in steps to log gradients to wandb"""
+    batch_id: int = str(int(time()))
+    """All folds and ensembles will be logged with this batch id"""
 
 
     def __init__(self, *args, **kwargs) -> None:

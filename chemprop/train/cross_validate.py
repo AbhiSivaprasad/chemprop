@@ -25,6 +25,7 @@ from chemprop.data import get_data, get_task_names, MoleculeDataset, validate_da
 from chemprop.utils import create_logger, makedirs, timeit
 from chemprop.features import set_extra_atom_fdim
 
+
 @timeit(logger_name=TRAIN_LOGGER_NAME)
 def cross_validate(args: TrainArgs,
                    train_func: Callable[[TrainArgs, MoleculeDataset, Logger], Dict[str, List[float]]]
@@ -112,6 +113,7 @@ def cross_validate(args: TrainArgs,
         info(f'Fold {fold_num}')
         args.seed = init_seed + fold_num
         args.save_dir = os.path.join(save_dir, f'fold_{fold_num}')
+        args.fold_num = fold_num
         makedirs(args.save_dir)
         data.reset_features_and_targets()
 

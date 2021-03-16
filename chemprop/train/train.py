@@ -44,7 +44,6 @@ def train(model: MoleculeModel,
     loss_sum = iter_count = 0
     acc_sum = 0
 
-    
     # track progress of process 0
     if args.rank == 0:
         if args.wandb:
@@ -78,7 +77,8 @@ def train(model: MoleculeModel,
         acc = acc.sum() / mask.sum()
         loss = loss.sum() / mask.sum()
 
-        loss_sum += loss.item()
+        batch_loss = loss.item()
+        loss_sum += batch_loss
         acc_sum += acc
         iter_count += 1
         loss.backward()
@@ -93,16 +93,13 @@ def train(model: MoleculeModel,
 
         # Logging
         lrs = scheduler.get_lr()
+        lrs_str = ', '.join(f'lr_{i} = {lr:.4e}' for i, lr in enumerate(lrs))
         pnorm = compute_pnorm(model)
         gnorm = compute_gnorm(model)
-        loss_avg = loss_sum / iter_count
-        acc_avg = acc_sum / iter_count
-        acc_sum = loss_sum = iter_count = 0
-        lrs_str = ', '.join(f'lr_{i} = {lr:.4e}' for i, lr in enumerate(lrs))
 
         # Log to wandb after every batch
         if args.wandb:
-            log = {"train_loss": loss.item(), "avg_train_loss": loss_avg, "param norm": pnorm, "gradient_norm": gnorm}
+            log = {"train_loss": batch_loss, "accuracy": acc, "param norm": pnorm, "gradient_norm": gnorm}
             for i, lr in enumerate(lrs):
                 log[f"learning_rate_{i}"] = lr
 
@@ -110,6 +107,11 @@ def train(model: MoleculeModel,
 
         # Log and/or add to tensorboard
         if (n_iter // args.batch_size) % args.log_frequency == 0:
+            # metrics aggregated for multiple batches
+            loss_avg = loss_sum / iter_count
+            acc_avg = acc_sum / iter_count
+            acc_sum = loss_sum = iter_count = 0  # reset metrics
+
             debug(f'Iteration #{n_iter}: Loss = {loss_avg:.4e}, Acc = {acc_avg:.2f}, PNorm = {pnorm:.4f}, GNorm = {gnorm:.4f}, {lrs_str}')
 
             if writer is not None:
