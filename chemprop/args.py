@@ -244,6 +244,14 @@ class TrainArgs(CommonArgs):
     save_preds: bool = False
     """Whether to save test split predictions during training."""
 
+    # DDP arguments
+    world_size: int = 1
+    """Number of GPUs to use"""
+    master_addr: str = "127.0.0.1"
+    """Address of process 0 which each DDP process will connect to"""
+    master_port: str = "8888"
+    """Port of process 0 which each DDP process will connect to"""
+
     # Model arguments
     bias: bool = False
     """Whether to add bias to linear layers."""
@@ -284,13 +292,19 @@ class TrainArgs(CommonArgs):
     """Path to pickled Knowledge Base"""
     subgraph_size: int = 8
     """Size of subgraphs to extract when knowledge_graph is True"""
+    min_subgraph_size: int = 1
+    """Minimum size of subgraphs to extract when knowledge_graph is True"""
     transformer_num_encoder_layers:int = 3
     """Number of layers for transformer encoder of subgraph embeddings"""
+    transformer_dim_feedforward:int = 2048
+    """Size of feedforward layer in transformer model"""
     kg_molecule_model:str = 'transformer'
     """What model to use to process subgraph embeddings into molecule embedding. Options: 'transformer'|'deepset'"""
+    subgraph_agg_fn: Literal['mean', 'sum'] = 'sum'
+    """Function to aggregate subgraph embeddings into molecule embedding. Options: 'sum'|'avg'"""
     transformer_num_heads:int = 8
     """Number of heads for transformer encoder of subgraph embeddings"""
-    kg_molecule_model_dropout:float = 0.2
+    kg_molecule_model_dropout:float = 0.3
     """Dropout for encoder of subgraph embeddings"""
     transformer_feature_dim:int = 512
     """Dimension for transformer input vectors"""

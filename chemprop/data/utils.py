@@ -3,7 +3,7 @@ import csv
 from logging import Logger
 import pickle
 from random import Random
-from typing import List, Set, Tuple, Union
+from typing import List, Set, Tuple, Union, Optional
 import os
 
 from rdkit import Chem

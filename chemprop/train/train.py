@@ -44,30 +44,23 @@ def train(model: MoleculeModel,
     loss_sum = iter_count = 0
     acc_sum = 0
 
-    wandb.watch(model, loss, log="all", log_freq=args.wandb_gradient_log_frequency)
     
-    for batches in tqdm(data_loader, total=len(data_loader), leave=False):
-        # Prepare batch
-        batch_size = sum(map(len, batches))
+    # track progress of process 0
+    if args.rank == 0:
+        if args.wandb:
+            wandb.watch(model, loss, log="all", log_freq=args.wandb_gradient_log_frequency)
 
-        masks_list = []
-        targets_list = []
-        data_list = []
-        for batch in batches:
-            mol_batch, features_batch, target_batch, atom_descriptors_batch = \
-                batch.batch_graph(), batch.features(), batch.targets(), batch.atom_descriptors()
-            mask = masks_list.append(torch.Tensor([[x is not None for x in tb] for tb in target_batch]))
-            targets_list.append(torch.Tensor([[0 if x is None else x for x in tb] for tb in target_batch]))
-            data_list.append((mol_batch, features_batch, atom_descriptors_batch))
+        data_loader = tqdm(data_loader, total=len(data_loader), leave=False)
 
-        mask = torch.cat(masks_list, dim=0)
-        targets = torch.cat(targets_list, dim=0)
-        
+    for batch in data_loader:
+        mol_batch, features_batch, target_batch, atom_descriptors_batch = \
+            batch.batch_graph(), batch.features(), batch.targets(), batch.atom_descriptors()
+        mask = torch.Tensor([[x is not None for x in tb] for tb in target_batch])
+        targets = torch.Tensor([[0 if x is None else x for x in tb] for tb in target_batch])
+
         # Run model
         model.zero_grad()
-        
-        preds = model(*list(zip(*data_list))) #mol_batch, features_batch, atom_descriptors_batch)
-        preds = preds[:batch_size]
+        preds = model(mol_batch, features_batch, atom_descriptors_batch)
         pred_classes = (preds > 0).int()
 
         # Move tensors to correct device
@@ -75,16 +68,15 @@ def train(model: MoleculeModel,
         targets = targets.to(preds.device)
         class_weights = torch.ones(targets.shape, device=preds.device)
 
-        acc = None
         if args.dataset_type == 'multiclass':
             targets = targets.long()
             loss = torch.cat([loss_func(preds[:, target_index, :], targets[:, target_index]).unsqueeze(1) for target_index in range(preds.size(1))], dim=1) * class_weights * mask
-            acc = (pred_classes == targets) * mask
         else:
             loss = loss_func(preds, targets) * class_weights * mask
-            acc = (pred_classes == targets) * mask
-        loss = loss.sum() / mask.sum()
+
+        acc = (pred_classes == targets) * mask
         acc = acc.sum() / mask.sum()
+        loss = loss.sum() / mask.sum()
 
         loss_sum += loss.item()
         acc_sum += acc
@@ -97,7 +89,7 @@ def train(model: MoleculeModel,
         if isinstance(scheduler, NoamLR):
             scheduler.step()
 
-        n_iter += batch_size
+        n_iter += len(batch)
 
         # Logging
         lrs = scheduler.get_lr()
@@ -113,18 +105,22 @@ def train(model: MoleculeModel,
             log = {"train_loss": loss.item(), "avg_train_loss": loss_avg, "param norm": pnorm, "gradient_norm": gnorm}
             for i, lr in enumerate(lrs):
                 log[f"learning_rate_{i}"] = lr
+
             wandb.log(log)
 
         # Log and/or add to tensorboard
         if (n_iter // args.batch_size) % args.log_frequency == 0:
-            debug(f'Loss = {loss_avg:.4e}, PNorm = {pnorm:.4f}, GNorm = {gnorm:.4f}, {lrs_str}')
+            debug(f'Iteration #{n_iter}: Loss = {loss_avg:.4e}, Acc = {acc_avg:.2f}, PNorm = {pnorm:.4f}, GNorm = {gnorm:.4f}, {lrs_str}')
 
             if writer is not None:
-                writer.add_scalar('train_acc', acc_avg, n_iter)
+                if args.dataset_type == 'classification':
+                    writer.add_scalar('train_acc', acc_avg, n_iter)
                 writer.add_scalar('train_loss', loss_avg, n_iter)
                 writer.add_scalar('param_norm', pnorm, n_iter)
                 writer.add_scalar('gradient_norm', gnorm, n_iter)
                 for i, lr in enumerate(lrs):
                     writer.add_scalar(f'learning_rate_{i}', lr, n_iter)
+            else:
+                debug(f'WRITER IS NONE')
 
     return n_iter

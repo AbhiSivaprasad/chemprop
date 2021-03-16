@@ -148,7 +148,7 @@ class MoleculeModel(nn.Module):
 class KGModel(nn.Module):
     def __init__(self, args: TrainArgs):
         super(KGModel, self).__init__()
-        self.device = args.device
+        self.device = torch.device(f"cuda:{args.rank}")
         self.classification = args.dataset_type == 'classification'
         self.multiclass = args.dataset_type == 'multiclass'
 
@@ -170,13 +170,12 @@ class KGModel(nn.Module):
 
         # subgraph embeddings --> molecule embedding
         if args.kg_molecule_model == 'deepset':
-            self.molecule_encoder = DeepSetInvariantModel(input_dim=subgraph_encoding_dim, 
-                                                          output_dim=subgraph_encoding_dim, 
-                                                          hidden_dim=subgraph_encoding_dim, 
-                                                          num_layers=args.deepset_num_layers, 
-                                                          dropout=args.kg_molecule_model_dropout, 
-                                                          activation=args.activation,
-                                                          device=self.device)
+            self.molecule_encoder = create_ffn(subgraph_encoding_dim, 
+                                               subgraph_encoding_dim, 
+                                               subgraph_encoding_dim, 
+                                               args.deepset_num_layers, 
+                                               args.kg_molecule_model_dropout, 
+                                               args.activation) 
 
             self.molecule_embed_dim = subgraph_encoding_dim
 
@@ -185,13 +184,19 @@ class KGModel(nn.Module):
                                                      d_model=args.transformer_feature_dim, 
                                                      num_encoder_layers=args.transformer_num_encoder_layers,
                                                      num_heads=args.transformer_num_heads,
-                                                     dropout=args.transformer_dropout,
+                                                     dim_feedforward=args.transformer_dim_feedforward,
+                                                     dropout=args.kg_molecule_model_dropout,
                                                      device=self.device)
         
             self.molecule_embed_dim = args.transformer_feature_dim
         else:
             self.molecule_encoder = None
             self.molecule_embed_dim = subgraph_encoding_dim
+
+        if args.subgraph_agg_fn == 'sum':
+            self.agg_fn = torch.sum
+        elif args.subgraph_agg_fn == 'mean':
+            self.agg_fn = torch.mean
 
         self.ffn = create_ffn(self.molecule_embed_dim, 
                               self.output_size, 
@@ -204,18 +209,8 @@ class KGModel(nn.Module):
                 batch_mol_graph: BatchMolGraph,
                 features_batch: List[np.ndarray] = None,
                 atom_descriptors_batch: List[np.ndarray] = None) -> torch.FloatTensor:
-        #assert features_batch is None
-        #assert atom_descriptors_batch is None
-
         # Encode subgraphs
-        device = self.ffn[1].weight.device
-        gpu_id = int(str(device)[-1:])
-        if gpu_id >= len(batch_mol_graph):
-            return torch.tensor([[0]], device=device)
-
-        batch_mol_graph = batch_mol_graph[gpu_id]
         subgraph_encodings = self.subgraph_model(batch_mol_graph)
-        print(f"## of subgraph encodings: {subgraph_encodings.shape[0]}")
         
         # organize subgraph encodings by molecule
         max_seq_length = max(len(scope) for scope in batch_mol_graph.subgraph_scope)
@@ -223,7 +218,7 @@ class KGModel(nn.Module):
             max_seq_length, 
             len(batch_mol_graph.subgraph_scope), 
             subgraph_encodings.shape[1], 
-            device=self.ffn[1].weight.device
+            device=self.device
         )
         
         # num_subgraphs, molecule, embedding
@@ -234,7 +229,7 @@ class KGModel(nn.Module):
         molecule_subgraph_encodings = self.molecule_encoder(input_encodings) if self.molecule_encoder else input_encodings
 
         # aggregate subgraph encodings of each molecule to get moleucle encodings
-        molecule_encodings = torch.mean(molecule_subgraph_encodings, dim=0)
+        molecule_encodings = self.agg_fn(molecule_subgraph_encodings, dim=0)
        
         output = self.ffn(molecule_encodings)
 
