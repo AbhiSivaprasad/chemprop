@@ -98,7 +98,7 @@ def train(model: MoleculeModel,
         gnorm = compute_gnorm(model)
 
         # Log to wandb after every batch
-        if args.wandb:
+        if args.rank == 0 and args.wandb:
             log = {"train_loss": batch_loss, "accuracy": acc, "param norm": pnorm, "gradient_norm": gnorm}
             for i, lr in enumerate(lrs):
                 log[f"learning_rate_{i}"] = lr
@@ -106,7 +106,7 @@ def train(model: MoleculeModel,
             wandb.log(log)
 
         # Log and/or add to tensorboard
-        if (n_iter // args.batch_size) % args.log_frequency == 0:
+        if args.rank == 0 and (n_iter // args.batch_size) % args.log_frequency == 0:
             # metrics aggregated for multiple batches
             loss_avg = loss_sum / iter_count
             acc_avg = acc_sum / iter_count

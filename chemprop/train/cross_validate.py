@@ -44,7 +44,7 @@ def cross_validate(args: TrainArgs,
     # save_dir needs to be indexed by model name, time, and name of dataset
     dataset_name = os.path.basename(os.path.normpath(args.data_path))  # file name of dataset
     dataset_name = os.path.splitext(dataset_name)[0]                   # remove extension
-    args.save_dir = wandb.run.dir if args.wandb else os.path.join(
+    args.save_dir = os.path.join(
         args.save_dir, 
         args.model_name, 
         dataset_name, 
@@ -122,13 +122,14 @@ def cross_validate(args: TrainArgs,
         os.environ['MASTER_PORT'] = args.master_port
 
         # args is not picklable so each process will read the args file
-        
-        mp.set_start_method('spawn', force=True)
-        pool = mp.Pool(processes=args.world_size, maxtasksperchild=1)
-        process_outputs = pool.starmap(
-            train_func, 
-            [(rank, args_path, data, knowledge_base, logger) for rank in range(args.world_size)]
-        )
+#         mp.set_start_method('spawn', force=True)
+#         pool = mp.Pool(processes=args.world_size, maxtasksperchild=1)
+#         process_outputs = pool.starmap(
+#             train_func, 
+#             [(rank, args_path, data, knowledge_base, logger) for rank in range(args.world_size)]
+#         )
+# 
+        mp.spawn(train_func, nprocs=args.world_size, args=(args_path, data, knowledge_base, logger))
 
         print("Multiprocessing Successful")
 

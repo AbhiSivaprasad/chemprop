@@ -15,7 +15,7 @@ from .nn_utils import DistributedSamplerWrapper
 from chemprop.args import TrainArgs
 from chemprop.features import get_features_generator
 from chemprop.features import BatchMolGraph, MolGraph
-from kg_chem import KnowledgeBase, get_unique_subgraphs
+from kg_chem import KnowledgeBase, get_unique_subgraphs, graph_to_mol
 
 
 # Cache of graph featurizations
@@ -187,21 +187,22 @@ class MoleculeDataset(Dataset):
         :return: A :class:`~chemprop.features.BatchMolGraph` containing the graph featurization of all the molecules.
         """
         if args is not None:
-            knowledge_graph, subgraph_size, min_subgraph_size = args.knowledge_graph, args.subgraph_size, args.min_subgraph_size
+            model_type, max_subgraph_size, min_subgraph_size = \
+                args.model_type, args.max_subgraph_size, args.min_subgraph_size
         else:
-            knowledge_graph = False
-            subgraph_size = 0
+            model_type = 'chemprop'
 
         if self._batch_graph is None:
             mol_graphs = None
             subgraph_scope = None  # maps from molecule index to indices in mol_graphs
             
-            if knowledge_graph:
+            if model_type == 'knowledge_graph':
                 # subgraph scope maps from molecule index to indices in unique_subgraphs 
                 all_smiles = [d.smiles for d in self._data]
-                unique_subgraphs, subgraph_scope = knowledge_base.get_subgraphs(all_smiles, min_size=4, max_size=8) 
+                unique_subgraphs, subgraph_scope = knowledge_base.get_subgraphs(
+                    all_smiles, min_size=min_subgraph_size, max_size=max_subgraph_size) 
                 
-                mol_graphs = [MolGraph(subgraph) for subgraph in unique_subgraphs]
+                mol_graphs = [MolGraph(graph_to_mol(subgraph)) for subgraph in unique_subgraphs]
             else: 
                 for d in self._data:
                     if d.smiles in SMILES_TO_GRAPH:
@@ -349,7 +350,7 @@ class MoleculeDataset(Dataset):
         """Resets the features and targets to their raw values."""
         for d in self._data:
             d.reset_features_and_targets()
-
+    
     def __len__(self) -> int:
         """
         Returns the length of the dataset (i.e., the number of molecules).

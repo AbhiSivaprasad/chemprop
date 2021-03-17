@@ -112,7 +112,7 @@ def load_checkpoint(rank: int,
     # Build model TODO: abstract away model creation
     if args.model_type == 'chemprop':
         model = MoleculeModel(args)
-    elif args.model_type == 'knowledge_graph'
+    elif args.model_type == 'knowledge_graph':
         model = KGModel(args)
     else:
         raise ValueError(f"Model type {args.model_type} not supported")
@@ -487,6 +487,7 @@ def set_all_seeds(seed):
 
 class ForkedPdb(pdb.Pdb):
     """A Pdb subclass that may be used
+
     from a forked multiprocessing child
 
     """

@@ -250,7 +250,7 @@ class TrainArgs(CommonArgs):
     """Number of GPUs to use"""
     master_addr: str = "127.0.0.1"
     """Address of process 0 which each DDP process will connect to"""
-    master_port: str = "8888"
+    master_port: str = "8889"
     """Port of process 0 which each DDP process will connect to"""
 
     # Model arguments
@@ -291,9 +291,9 @@ class TrainArgs(CommonArgs):
     """For norm aggregation, number by which to divide summed up atomic features"""
     knowledge_base_path: str = None 
     """Path to pickled Knowledge Base"""
-    subgraph_size: int = 8
-    """Size of subgraphs to extract when knowledge_graph is True"""
-    min_subgraph_size: int = 1
+    max_subgraph_size: int = 8
+    """Maximum size of subgraphs to extract when knowledge_graph is True"""
+    min_subgraph_size: int = 4
     """Minimum size of subgraphs to extract when knowledge_graph is True"""
     transformer_num_encoder_layers:int = 3
     """Number of layers for transformer encoder of subgraph embeddings"""
@@ -313,6 +313,8 @@ class TrainArgs(CommonArgs):
     """Number of layers in Phi function for Deepset"""
     model_type:Literal['chemprop', 'knowledge_graph'] = 'chemprop'
     """Which type of model to run"""
+    model_name:str = "vanilla_chemprop"
+    """Name of model which describes the model e.g. kg_vanilla_mean = knowledge graph with vanilla mean aggregation"""
 
     # Training arguments
     epochs: int = 30

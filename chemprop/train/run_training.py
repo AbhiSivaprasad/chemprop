@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import torch.nn as nn
 
+from argparse import Namespace
 from tensorboardX import SummaryWriter
 from tqdm import trange
 from torch.optim.lr_scheduler import ExponentialLR
@@ -27,6 +28,7 @@ from chemprop.nn_utils import param_count
 from chemprop.utils import build_optimizer, build_lr_scheduler, get_loss_func, load_checkpoint,makedirs, \
     save_checkpoint, save_smiles_splits, set_all_seeds
 from torch.nn.parallel import DistributedDataParallel as DDP
+from os.path import join
 
 from kg_chem import KnowledgeBase
 
@@ -196,7 +198,7 @@ def run_training(rank: int,
 
             if args.model_type == 'chemprop':
                 model = MoleculeModel(args)
-            elif args.model_type == 'knowledge_graph'
+            elif args.model_type == 'knowledge_graph':
                 model = KGModel(args)
             else:
                 raise ValueError(f"Model type {args.model_type} not supported")
@@ -212,8 +214,12 @@ def run_training(rank: int,
         hyperparams = Namespace(**args.as_dict())
 
         # intialize wandb run
-        if args.wandb:
-            wandb.init(project=args.wandb_project, config=hyperparams)
+        wandb_run = None
+        if args.wandb and rank == 0:
+            wandb_run = wandb.init(project=args.wandb_project, config=hyperparams, reinit=True)
+
+            # save args to wandb folder
+            args.save(join(wandb.run.dir, 'args.json'))
 
         model = DDP(model, device_ids=[rank])
 
@@ -265,12 +271,18 @@ def run_training(rank: int,
                     debug(f'Validation {metric} = {avg_val_score:.6f}')
                     writer.add_scalar(f'validation_{metric}', avg_val_score, n_iter)
 
+                    if args.wandb:
+                        wandb.log({f"validation_{metric}": avg_val_score})
+
                     if args.show_individual_scores:
                         # Individual validation scores
                         for task_name, val_score in zip(args.task_names, scores):
                             debug(f'Validation {task_name} {metric} = {val_score:.6f}')
                             writer.add_scalar(f'validation_{task_name}_{metric}', val_score, n_iter)
                 
+                            if args.wandb:
+                                wandb.log({f"validation_{task_name}_{metric}": val_score})
+
                 # Save model checkpoint if improved validation score
                 avg_val_score = np.nanmean(val_scores[args.metric])
                 if args.minimize_score and avg_val_score < best_score or \
@@ -328,6 +340,9 @@ def run_training(rank: int,
                 
         if writer:
             writer.close()
+        
+        if wandb_run is not None:
+            wandb_run.join()
 
     # Evaluate ensemble on test set
     avg_test_preds = (sum_test_preds / args.ensemble_size).tolist()
